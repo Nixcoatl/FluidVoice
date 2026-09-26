@@ -509,9 +509,11 @@ final class TypingService {
         }
 
         // Refuse only when the focused element certainly cannot take text.
+        // A remote desktop window never looks editable here; its fields live on the other machine.
+        let isRemoteDesktop = RemoteDesktopPaste.isFrontmost
         let targetAssessment = DeliveryTargetAssessment.assessFocusedElement()
-        DebugLogger.shared.info("FOCUS_ASSESS \(targetAssessment.logDescription)", source: "TypingService")
-        if targetAssessment.isCertainlyNotEditable {
+        DebugLogger.shared.info("FOCUS_ASSESS \(targetAssessment.logDescription) remoteDesktop=\(isRemoteDesktop)", source: "TypingService")
+        if targetAssessment.isCertainlyNotEditable, !isRemoteDesktop {
             await PasteDeliveryCoordinator.shared.copyBackup(text, enabled: preserveTranscriptOnClipboard)
             self.bench("request_return reason=no_editable_target")
             let result = TextDeliveryResult.recoverableFailure(.noEditableTarget)
@@ -525,7 +527,7 @@ final class TypingService {
             return result
         }
 
-        let usesClipboard = mode == .reliablePaste ||
+        let usesClipboard = mode == .reliablePaste || isRemoteDesktop ||
             self.ghosttyTargetPID(preferredTargetPID: preferredTargetPID) != nil
         // The read-back baseline costs an AX value read; only the clipboard
         // paths verify, so the direct path skips it.
@@ -567,7 +569,7 @@ final class TypingService {
             toggleStopRequestedAt: toggleStopRequestedAt,
             completedAt: completedAt
         )
-        if verifiesLanding, SettingsStore.shared.showPasteCheckAlerts,
+        if verifiesLanding, SettingsStore.shared.showPasteCheckAlerts, !isRemoteDesktop,
            result == .commandPosted, deliveryPath != .direct, let verificationBefore
         {
             self.verifyPasteLanded(text, before: verificationBefore)

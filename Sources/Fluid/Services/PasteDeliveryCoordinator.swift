@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon
 import Foundation
 import UniformTypeIdentifiers
@@ -563,11 +564,53 @@ final class SystemPasteboardManager: PasteboardManaging {
     }
 }
 
+/// Remote desktop clients (Chrome Remote Desktop, Microsoft's Windows App) forward keys to a
+/// Windows machine, where Command acts as the Windows key. Pasting there needs Control+V, a
+/// short pause so the client can sync the clipboard to the remote side first, and a longer
+/// wait before FluidVoice restores the previous clipboard. The text itself travels through the
+/// shared clipboard, so accents and ñ arrive intact whatever the remote keyboard layout.
+@MainActor
+enum RemoteDesktopPaste {
+    private static let bundleIDs: Set<String> = [
+        "com.google.Chrome.app.cmkncekebbebpfilplodngbpllndjkfo", // Chrome Remote Desktop (installed app)
+        "com.microsoft.rdc.macos", // Microsoft Remote Desktop / Windows App
+        "com.microsoft.rdc.mac",
+    ]
+    private static let browserBundleIDs: Set<String> = ["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary"]
+    private static let windowTitleMarkers = ["Remote Desktop", "Escritorio remoto"]
+
+    static let clipboardSyncDelayNanoseconds: UInt64 = 350_000_000
+    static let settlementDelayNanoseconds: UInt64 = 3_000_000_000
+
+    /// True when the app receiving the text is a remote desktop session, including Chrome
+    /// Remote Desktop running in a regular Chrome tab.
+    static var isFrontmost: Bool {
+        guard let app = NSWorkspace.shared.frontmostApplication, let bundleID = app.bundleIdentifier else { return false }
+        if self.bundleIDs.contains(bundleID) { return true }
+        guard self.browserBundleIDs.contains(bundleID) else { return false }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, 0.3)
+        var windowValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) == .success,
+              let windowValue, CFGetTypeID(windowValue) == AXUIElementGetTypeID()
+        else { return false }
+        var titleValue: CFTypeRef?
+        AXUIElementCopyAttributeValue(unsafeBitCast(windowValue, to: AXUIElement.self), kAXTitleAttribute as CFString, &titleValue)
+        guard let title = titleValue as? String else { return false }
+        return self.windowTitleMarkers.contains { title.localizedCaseInsensitiveContains($0) }
+    }
+}
+
 @MainActor
 final class SystemPasteCommandPoster: PasteCommandPosting {
     func postGlobalPasteCommand() async -> Bool {
         guard AXIsProcessTrusted() else { return false }
-        let events = Self.makePasteEvents()
+        let isRemote = RemoteDesktopPaste.isFrontmost
+        if isRemote {
+            DebugLogger.shared.info("Remote desktop target: pasting with Control+V after clipboard sync", source: "PasteDeliveryCoordinator")
+            try? await Task.sleep(nanoseconds: RemoteDesktopPaste.clipboardSyncDelayNanoseconds)
+        }
+        let events = Self.makePasteEvents(useControl: isRemote)
         guard !events.isEmpty else { return false }
 
         // The coordinator verifies pasteboard ownership before reaching this point,
@@ -581,9 +624,11 @@ final class SystemPasteCommandPoster: PasteCommandPosting {
     /// Command down, V down, V up, Command up. Pressing and releasing Command
     /// explicitly matters: setting the flag on V alone leaves the HID state
     /// reporting Command as held, which later blocks the send key.
-    nonisolated static func makePasteEvents() -> [CGEvent] {
+    /// With `useControl`, sends Control+V instead (remote Windows sessions).
+    nonisolated static func makePasteEvents(useControl: Bool = false) -> [CGEvent] {
         let pasteKeyCode = TypingService.pasteVirtualKeyCode
-        let commandKeyCode = CGKeyCode(kVK_Command)
+        let commandKeyCode = CGKeyCode(useControl ? kVK_Control : kVK_Command)
+        let modifierFlag: CGEventFlags = useControl ? .maskControl : .maskCommand
         let source = CGEventSource(stateID: .combinedSessionState)
         guard let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: true),
               let vDown = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true),
@@ -593,9 +638,9 @@ final class SystemPasteCommandPoster: PasteCommandPosting {
             return []
         }
 
-        cmdDown.flags = .maskCommand
-        vDown.flags = .maskCommand
-        vUp.flags = .maskCommand
+        cmdDown.flags = modifierFlag
+        vDown.flags = modifierFlag
+        vUp.flags = modifierFlag
         cmdUp.flags = []
         // Mark the paste as ours so the hotkey tap passes it through untouched.
         let events = [cmdDown, vDown, vUp, cmdUp]
@@ -778,7 +823,10 @@ final class PasteDeliveryCoordinator {
     }
 
     private func scheduleSettlement(sessionID: String, generation: UInt64) {
-        let settlementDelayNanoseconds = self.settlementDelayNanoseconds
+        // Remote sessions need time to sync the clipboard and paste before it is restored.
+        let settlementDelayNanoseconds = RemoteDesktopPaste.isFrontmost
+            ? max(self.settlementDelayNanoseconds, RemoteDesktopPaste.settlementDelayNanoseconds)
+            : self.settlementDelayNanoseconds
         let scheduledAt = ProcessInfo.processInfo.systemUptime
         let task = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: settlementDelayNanoseconds)
