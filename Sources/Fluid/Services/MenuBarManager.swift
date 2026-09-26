@@ -156,6 +156,13 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isRunning in
                 guard let self else { return }
+                if isRunning {
+                    if NotchContentState.shared.recordingStartedAt == nil {
+                        NotchContentState.shared.recordingStartedAt = Date()
+                    }
+                } else {
+                    NotchContentState.shared.recordingStartedAt = nil
+                }
                 if isRunning == false, self.isProcessingActive {
                     self.hasDeferredStoppedRecordingState = true
                     self.overlayBench("recording_state_deferred reason=processing_active")

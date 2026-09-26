@@ -840,6 +840,13 @@ struct SettingsView: View {
                                         Divider().opacity(0.2)
 
                                         self.optionToggleRow(
+                                            title: "Show Recording Timer",
+                                            description: "Show how long you've been dictating next to the waveform.",
+                                            isOn: self.$settings.showRecordingTimer
+                                        )
+                                        Divider().opacity(0.2)
+
+                                        self.optionToggleRow(
                                             title: "Show Processing Indicator",
                                             description: "Keep the overlay visible with \"Transcribing\" until your text is inserted.",
                                             isOn: self.$settings.keepOverlayWhileProcessing

@@ -40,11 +40,40 @@ jobs:
           DEVELOPMENT_TEAM="" \
           | tail -n 200
 
-    - name: Normalize CTranscribe.framework and ad-hoc sign
+    - name: Import personal signing certificate
+      env:
+        CERT_P12: ${{ secrets.FLUIDVOICE_CERT_P12 }}
+        CERT_PASSWORD: ${{ secrets.FLUIDVOICE_CERT_PASSWORD }}
+      run: |
+        set -euo pipefail
+        if [ -z "${CERT_P12:-}" ]; then
+          echo "No personal certificate secret; falling back to ad-hoc signing."
+          echo "SIGN_IDENTITY=-" >> "$GITHUB_ENV"
+          exit 0
+        fi
+        KC="$RUNNER_TEMP/signing.keychain-db"
+        KC_PW="$(uuidgen)"
+        echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+        security create-keychain -p "$KC_PW" "$KC"
+        security set-keychain-settings -lut 21600 "$KC"
+        security unlock-keychain -p "$KC_PW" "$KC"
+        security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+        security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PW" "$KC" > /dev/null
+        security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+        rm -f "$RUNNER_TEMP/cert.p12"
+        # Self-signed, so it shows as untrusted; codesign still uses it by hash.
+        HASH="$(security find-identity -p codesigning "$KC" | awk '/"FluidVoice Nixcoatl Personal"/ {print $2; exit}')"
+        [ -n "$HASH" ] || { echo "Signing identity not found"; exit 1; }
+        echo "SIGN_IDENTITY=$HASH" >> "$GITHUB_ENV"
+        echo "SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
+
+    - name: Normalize CTranscribe.framework and sign
       run: |
         set -euo pipefail
         APP="DerivedData/Build/Products/Release/FluidVoice.app"
         FW="$APP/Contents/Frameworks/CTranscribe.framework"
+        SIGN=(codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp=none)
+        if [ -n "${SIGN_KEYCHAIN:-}" ]; then SIGN+=(--keychain "$SIGN_KEYCHAIN"); fi
         if [ -d "$FW/Versions/A" ]; then
           for p in "$FW/Versions/Current" "$FW/CTranscribe" "$FW/Resources"; do
             rm -rf "$p"
@@ -52,7 +81,7 @@ jobs:
           ln -s A "$FW/Versions/Current"
           ln -s Versions/Current/CTranscribe "$FW/CTranscribe"
           ln -s Versions/Current/Resources "$FW/Resources"
-          codesign --force --sign - --options runtime --timestamp=none "$FW"
+          "${SIGN[@]}" "$FW"
         fi
         # Re-sign with the entitlements Xcode generated (Fluid.entitlements plus the
         # ENABLE_RESOURCE_ACCESS_* ones such as audio-input), not the raw source file.
@@ -60,11 +89,11 @@ jobs:
         codesign -d --entitlements - --xml "$APP" > "$ENT"
         plutil -p "$ENT" | grep -q 'com.apple.security.device.audio-input' \
           || { echo "audio-input entitlement missing"; exit 1; }
-        codesign --force --sign - --options runtime --timestamp=none \
-          --entitlements "$ENT" "$APP"
+        "${SIGN[@]}" --entitlements "$ENT" "$APP"
         codesign -d --entitlements - --xml "$APP" | plutil -p - | grep -q 'com.apple.security.device.audio-input' \
           || { echo "audio-input entitlement lost after re-sign"; exit 1; }
         codesign --verify --deep --strict --verbose=2 "$APP"
+        codesign -d -r- "$APP"
 
     - name: Zip app
       run: |

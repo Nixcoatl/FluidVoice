@@ -3624,6 +3624,13 @@ struct BottomOverlayView: View {
                         height: self.layout.waveformHeight
                     )
 
+                    if self.settings.showRecordingTimer,
+                       let startedAt = self.contentState.recordingStartedAt,
+                       !self.contentState.isProcessing
+                    {
+                        RecordingElapsedTimeText(startedAt: startedAt, fontSize: max(self.layout.modeFontSize, 10))
+                    }
+
                     if self.isPillSize, self.isPillExpanded {
                         self.promptSelectorView
                             .fixedSize()
@@ -3868,6 +3875,34 @@ struct BottomOverlayView: View {
 
 /// The chip resolves out of a soft blur while the pill widens, so the growth
 /// reads as one gesture instead of a width change followed by a pop-in.
+/// Small m:ss (or h:mm:ss) counter shown next to the waveform while recording.
+private struct RecordingElapsedTimeText: View {
+    let startedAt: Date
+    let fontSize: CGFloat
+
+    var body: some View {
+        TimelineView(.periodic(from: self.startedAt, by: 1)) { context in
+            Text(Self.format(context.date.timeIntervalSince(self.startedAt)))
+                .font(.fluidSystem(size: self.fontSize, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .accessibilityLabel("Recording time")
+    }
+
+    static func format(_ interval: TimeInterval) -> String {
+        let total = max(0, Int(interval))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            : String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
 private struct PillChipTransitionModifier: ViewModifier {
     let progress: CGFloat
 

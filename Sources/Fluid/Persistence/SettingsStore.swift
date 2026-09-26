@@ -1932,6 +1932,12 @@ final class SettingsStore: ObservableObject {
         set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.keepOverlayWhileProcessing) }
     }
 
+    /// Show a small elapsed-time counter (m:ss) in the bottom overlay while recording.
+    var showRecordingTimer: Bool {
+        get { self.defaults.object(forKey: Keys.showRecordingTimer) as? Bool ?? true }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.showRecordingTimer) }
+    }
+
     var enableStreamingPreview: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.enableStreamingPreview)
@@ -5830,6 +5836,7 @@ private extension SettingsStore {
         static let doubleTapToStart = "DoubleTapToStart"
         static let smartParagraphsEnabled = "SmartParagraphsEnabled"
         static let keepOverlayWhileProcessing = "KeepOverlayWhileProcessing"
+        static let showRecordingTimer = "ShowRecordingTimer"
         static let enableStreamingPreview = "EnableStreamingPreview"
         static let experimentalParakeetUnifiedFinalEnabled = "ExperimentalParakeetUnifiedFinalEnabled"
         static let returnDictationToStartingField = "ReturnDictationToStartingField"
