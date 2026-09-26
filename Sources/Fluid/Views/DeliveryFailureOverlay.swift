@@ -41,7 +41,7 @@ final class DeliveryFailureOverlayController {
 
     static let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
 
-    private static let displayDuration: TimeInterval = 10
+    private static let displayDuration: TimeInterval = 20
     private var panel: NSPanel?
     private var hostingView: NSHostingView<DeliveryFailureOverlayView>?
     private var dismissTask: Task<Void, Never>?
@@ -62,6 +62,7 @@ final class DeliveryFailureOverlayController {
             onCopied: { [weak self] in
                 self?.hide(after: 0.9)
             },
+            onKeepOpen: { [weak self] in self?.keepOpen() },
             onDismiss: { [weak self] in self?.hide() }
         )
         if let hostingView = self.hostingView {
@@ -83,6 +84,13 @@ final class DeliveryFailureOverlayController {
             guard !Task.isCancelled, let self, self.generation == currentGeneration else { return }
             self.hide()
         }
+    }
+
+    /// Cancels the auto-dismiss so the card stays until the user closes it
+    /// (e.g. while they hover it or drag the transcript into another app).
+    func keepOpen() {
+        self.dismissTask?.cancel()
+        self.dismissTask = nil
     }
 
     func hide(after delay: TimeInterval = 0) {
@@ -167,6 +175,7 @@ private struct DeliveryFailureOverlayView: View {
     let displayDuration: TimeInterval
     let startedAt: Date
     let onCopied: () -> Void
+    let onKeepOpen: () -> Void
     let onDismiss: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -175,6 +184,7 @@ private struct DeliveryFailureOverlayView: View {
     @State private var isCloseHovered = false
     @State private var isCopyHovered = false
     @State private var isSettingsHovered = false
+    @State private var isKeptOpen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -205,15 +215,29 @@ private struct DeliveryFailureOverlayView: View {
                 .accessibilityLabel("Dismiss")
             }
 
-            Text(self.transcriptPreview)
-                .font(.fluidSystem(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "hand.draw")
+                    .font(.fluidSystem(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .padding(.top, 2)
+                Text(self.transcriptPreview)
+                    .font(.fluidSystem(size: 14, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(5)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
+            .contentShape(Rectangle())
+            .onDrag {
+                self.keepOpen()
+                return NSItemProvider(object: self.transcript as NSString)
+            }
+            .help("Drag into any text field")
 
             HStack(spacing: 8) {
-                Text("Your transcript is saved.")
+                Text("Drag it into a text field, or copy it.")
                     .font(.fluidSystem(size: 11))
                     .foregroundStyle(.white.opacity(0.58))
                     .lineLimit(1)
@@ -250,11 +274,16 @@ private struct DeliveryFailureOverlayView: View {
         .frame(width: 440)
         .background(TransientOverlayBackground())
         .overlay(alignment: .bottomLeading) {
-            TransientOverlayCountdownBar(
-                startedAt: self.startedAt,
-                duration: self.displayDuration,
-                reduceMotion: self.reduceMotion
-            )
+            if !self.isKeptOpen {
+                TransientOverlayCountdownBar(
+                    startedAt: self.startedAt,
+                    duration: self.displayDuration,
+                    reduceMotion: self.reduceMotion
+                )
+            }
+        }
+        .onHover { hovering in
+            if hovering { self.keepOpen() }
         }
         .scaleEffect(self.appeared || self.reduceMotion ? 1 : 0.96)
         .offset(y: self.appeared || self.reduceMotion ? 0 : 10)
@@ -267,6 +296,12 @@ private struct DeliveryFailureOverlayView: View {
     private var transcriptPreview: String {
         let trimmed = self.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Nothing was captured" : "\u{201C}\(trimmed)\u{201D}"
+    }
+
+    private func keepOpen() {
+        guard !self.isKeptOpen else { return }
+        self.isKeptOpen = true
+        self.onKeepOpen()
     }
 
     private func openAccessibilitySettings() {

@@ -1919,6 +1919,19 @@ final class SettingsStore: ObservableObject {
         set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.doubleTapToStart) }
     }
 
+    /// Split long dictations into paragraphs at sentence boundaries (on-device, off by default).
+    var smartParagraphsEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.smartParagraphsEnabled) }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.smartParagraphsEnabled) }
+    }
+
+    /// Keep the overlay showing "Transcribing" until the text is inserted, even when no AI
+    /// post-processing runs. Defaults to true so long dictations never look stuck.
+    var keepOverlayWhileProcessing: Bool {
+        get { self.defaults.object(forKey: Keys.keepOverlayWhileProcessing) as? Bool ?? true }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.keepOverlayWhileProcessing) }
+    }
+
     var enableStreamingPreview: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.enableStreamingPreview)
@@ -5815,6 +5828,8 @@ private extension SettingsStore {
         static let pressAndHoldMode = "PressAndHoldMode"
         static let hotkeyMode = "HotkeyMode"
         static let doubleTapToStart = "DoubleTapToStart"
+        static let smartParagraphsEnabled = "SmartParagraphsEnabled"
+        static let keepOverlayWhileProcessing = "KeepOverlayWhileProcessing"
         static let enableStreamingPreview = "EnableStreamingPreview"
         static let experimentalParakeetUnifiedFinalEnabled = "ExperimentalParakeetUnifiedFinalEnabled"
         static let returnDictationToStartingField = "ReturnDictationToStartingField"

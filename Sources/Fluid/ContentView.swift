@@ -2948,6 +2948,7 @@ struct ContentView: View {
         } ?? DictationAIPostProcessingGate.isConfigured(for: .primary, appBundleID: self.recordingAppInfo?.bundleId)
         let shouldHideOverlayOnStop = route == .normal && !wasRewriteMode && !wasCommandMode
             && !promptTest.isActive && !shouldUseAIOnStop && !self.settings.spokenSendEnabled
+            && !self.settings.keepOverlayWhileProcessing
         DebugLogger.shared.info(
             "Routing decision snapshot | activeMode=\(modeAtStop.rawValue) | rewrite=\(wasRewriteMode) | command=\(wasCommandMode) | overlay=\(NotchContentState.shared.mode.rawValue)",
             source: "ContentView"
@@ -3150,6 +3151,7 @@ struct ContentView: View {
         // Apply GAAV formatting as the FINAL step (after AI post-processing)
         // This ensures the user's preference for no capitalization/period is respected
         finalText = ASRService.applyGAAVFormatting(finalText)
+        finalText = ASRService.applySmartParagraphs(finalText)
         // Apply Continuous Dictation Mode after GAAV so smart caps use the field
         // context captured at recording start, and the trailing space enables chaining.
         finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText)
@@ -4216,6 +4218,7 @@ struct ContentView: View {
             windowTitle: appInfo.windowTitle
         )
         finalText = ASRService.applyGAAVFormatting(finalText)
+        finalText = ASRService.applySmartParagraphs(finalText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
             : ""

@@ -833,6 +833,20 @@ struct SettingsView: View {
                                         }
 
                                         self.optionToggleRow(
+                                            title: "Smart Paragraphs",
+                                            description: "Break long dictations into paragraphs at sentence boundaries. Runs on your Mac.",
+                                            isOn: self.$settings.smartParagraphsEnabled
+                                        )
+                                        Divider().opacity(0.2)
+
+                                        self.optionToggleRow(
+                                            title: "Show Processing Indicator",
+                                            description: "Keep the overlay visible with \"Transcribing\" until your text is inserted.",
+                                            isOn: self.$settings.keepOverlayWhileProcessing
+                                        )
+                                        Divider().opacity(0.2)
+
+                                        self.optionToggleRow(
                                             title: "Copy to Clipboard",
                                             description: "Automatically copy transcribed text to clipboard as a backup.",
                                             isOn: self.$copyToClipboard
