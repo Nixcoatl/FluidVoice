@@ -1971,6 +1971,12 @@ final class SettingsStore: ObservableObject {
         set { objectWillChange.send(); self.defaults.set(newValue.rawValue, forKey: Keys.menuBarNotchTranscript) }
     }
 
+    /// The Mac's Dictation (microphone) key starts FluidVoice instead of Apple Dictation.
+    var dictationKeyStartsFluidVoice: Bool {
+        get { self.defaults.object(forKey: Keys.dictationKeyStartsFluidVoice) as? Bool ?? true }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.dictationKeyStartsFluidVoice) }
+    }
+
     var enableStreamingPreview: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.enableStreamingPreview)
@@ -5876,6 +5882,7 @@ private extension SettingsStore {
         static let pressAndHoldMode = "PressAndHoldMode"
         static let hotkeyMode = "HotkeyMode"
         static let doubleTapToStart = "DoubleTapToStart"
+        static let dictationKeyStartsFluidVoice = "DictationKeyStartsFluidVoice"
         static let smartParagraphsEnabled = "SmartParagraphsEnabled"
         static let keepOverlayWhileProcessing = "KeepOverlayWhileProcessing"
         static let showRecordingTimer = "ShowRecordingTimer"

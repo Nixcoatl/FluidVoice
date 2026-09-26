@@ -282,6 +282,9 @@ final class GlobalHotkeyManager: NSObject {
     private var pasteLastTranscriptionCallback: (() -> Void)?
     private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
     private let automaticTapThresholdSeconds: TimeInterval = 0.4
+    /// The Mac's Dictation (microphone) key, F5 on recent MacBooks. It arrives as a plain
+    /// key-down/key-up pair with this virtual keycode and the secondary-Fn flag set.
+    private static let dictationKeyCode: UInt16 = 0xB0
     /// Max gap between the first tap's release and the second press for double-tap-to-start.
     private let doubleTapWindowSeconds: TimeInterval = 0.4
     /// Uptime of the idle tap that armed double-tap-to-start; nil when not armed.
@@ -1248,6 +1251,23 @@ final class GlobalHotkeyManager: NSObject {
 
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let eventModifiers = Self.modifierFlags(from: event.flags)
+
+        // The Dictation key starts FluidVoice dictation. Consuming it here, at the head of the
+        // event stream, keeps Apple Dictation from opening, with no system settings to change.
+        if keyCode == Self.dictationKeyCode,
+           type == .keyDown || type == .keyUp,
+           SettingsStore.shared.dictationKeyStartsFluidVoice
+        {
+            if type == .keyDown {
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    DebugLogger.shared.info("Dictation (microphone) key pressed", source: "GlobalHotkeyManager")
+                    self.handlePrimaryDictationTriggerDown()
+                }
+            } else {
+                self.handlePrimaryDictationTriggerUp()
+            }
+            return nil
+        }
 
         switch type {
         case .keyDown:

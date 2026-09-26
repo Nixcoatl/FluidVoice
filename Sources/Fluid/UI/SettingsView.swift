@@ -823,6 +823,13 @@ struct SettingsView: View {
                                         .settingsSearchTarget(.activationMode)
                                         Divider().opacity(0.2)
 
+                                        self.optionToggleRow(
+                                            title: "Use the Mac's Dictation Key",
+                                            description: "The microphone key (F5) starts FluidVoice dictation instead of Apple Dictation. Works alongside your shortcut.",
+                                            isOn: self.$settings.dictationKeyStartsFluidVoice
+                                        )
+                                        Divider().opacity(0.2)
+
                                         if self.hotkeyMode != .hold {
                                             self.optionToggleRow(
                                                 title: "Double-Tap to Start",
