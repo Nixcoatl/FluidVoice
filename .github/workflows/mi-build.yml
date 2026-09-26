@@ -52,7 +52,14 @@ jobs:
           CODE_SIGN_IDENTITY="-" \
           CODE_SIGN_STYLE=Manual \
           DEVELOPMENT_TEAM="" \
-          | tail -n 200
+          > build.log 2>&1 || {
+            echo "::group::Compiler errors"
+            grep -E "error:" build.log | sort -u | head -80
+            echo "::endgroup::"
+            tail -n 40 build.log
+            exit 1
+          }
+        tail -n 20 build.log
 
     - name: Import personal signing certificate
       env:
