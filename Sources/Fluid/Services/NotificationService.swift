@@ -41,6 +41,26 @@ enum NotificationService {
         }
     }
 
+    /// Tells the user a dictation interrupted by a crash or forced quit was recovered into History.
+    static func showRecoveredDictation(minutes: Int) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                self.deliverRecoveredDictation(minutes: minutes, using: center)
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    guard granted else { return }
+                    self.deliverRecoveredDictation(minutes: minutes, using: center)
+                }
+            case .denied:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+
     static func showCommandModeFailure(error: String) {
         guard SettingsStore.shared.notifyAIProcessingFailures else { return }
 
@@ -69,6 +89,13 @@ enum NotificationService {
                 break
             }
         }
+    }
+
+    private static func deliverRecoveredDictation(minutes: Int, using center: UNUserNotificationCenter) {
+        let content = UNMutableNotificationContent()
+        content.title = "Dictation recovered"
+        content.body = "FluidVoice closed unexpectedly during a \(minutes)-min dictation. The transcript is in History."
+        center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
     private static func deliverAIProcessingFallback(error: String, using center: UNUserNotificationCenter) {

@@ -24,8 +24,14 @@ final class StatsSnapshotStore: ObservableObject {
             self.task?.cancel()
             self.task = nil
             self.isUpdating = false
-            if entries.isEmpty { self.snapshot = nil }
+            if entries.isEmpty, StatsArchiveStore.shared.archive.isEmpty { self.snapshot = nil }
             if !self.owners.isEmpty { self.refresh(entries: entries) }
+        }.store(in: &self.subscriptions)
+
+        StatsArchiveStore.shared.$archive.dropFirst().sink { [weak self] _ in
+            guard let self else { return }
+            self.revision &+= 1
+            if !self.owners.isEmpty { self.refresh(entries: self.history.entries) }
         }.store(in: &self.subscriptions)
 
         for name in [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange, NSLocale.currentLocaleDidChangeNotification] {
@@ -66,12 +72,13 @@ final class StatsSnapshotStore: ObservableObject {
         let revision = self.revision
         let calendar = Calendar.current
         let now = Date()
+        let archive = StatsArchiveStore.shared.archive
         self.isUpdating = true
         self.task = Task { [weak self] in
             let worker = Task.detached(priority: .utility) {
                 // Coalesce a burst of history mutations without delaying navigation.
                 try await Task.sleep(nanoseconds: 50_000_000)
-                return try StatsSnapshot.build(entries: entries, now: now, calendar: calendar)
+                return try StatsSnapshot.build(entries: entries, archive: archive, now: now, calendar: calendar)
             }
             let value = await withTaskCancellationHandler {
                 try? await worker.value

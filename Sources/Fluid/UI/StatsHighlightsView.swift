@@ -277,6 +277,12 @@ struct StatsHighlightsView: View {
                 HStack(alignment: .top, spacing: 20) {
                     self.smallMetric(value: "\(self.snapshot.aiEnhancementRate)%", title: "AI enhanced", icon: "sparkles")
                     Spacer(minLength: 0)
+                    self.smallMetric(
+                        value: "\(self.snapshot.cancelledCount) (\(self.snapshot.cancellationRate)%)",
+                        title: "cancelled with Esc",
+                        icon: "escape"
+                    )
+                    Spacer(minLength: 0)
                     self.smallMetric(value: "\(self.snapshot.averageWordsPerTranscription)", title: "words per dictation", icon: "text.alignleft")
                 }
                 .frame(minHeight: 47, alignment: .top)

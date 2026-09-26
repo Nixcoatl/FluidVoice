@@ -127,6 +127,12 @@ final class SimpleUpdater {
     static let shared = SimpleUpdater()
     private init() {}
 
+    /// This personal build updates from its own fork, not the official FluidVoice releases.
+    static let releaseOwner = "Nixcoatl"
+    static let releaseRepo = "FluidVoice"
+    /// Fork builds are tagged "<version>-nix.<build>", which reads as a prerelease.
+    static let includesPrereleases = true
+
     private let fileManager = FileManager.default
     private let maxRollbackBackups = 3
     private let rollbackBackupDirectoryName = "RollbackBackups"
@@ -838,8 +844,11 @@ final class SimpleUpdater {
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 let s = String(data: data, encoding: .utf8) ?? ""
 
-                // First try to get TeamIdentifier (most reliable)
-                if let teamLine = s.split(separator: "\n").first(where: { $0.hasPrefix("TeamIdentifier=") }) {
+                // First try to get TeamIdentifier (most reliable). Self-signed personal builds
+                // have none ("not set"), so they fall through to the Authority (certificate name) match.
+                if let teamLine = s.split(separator: "\n").first(where: { $0.hasPrefix("TeamIdentifier=") }),
+                   teamLine != "TeamIdentifier=not set"
+                {
                     cont.resume(returning: String(teamLine))
                 } else {
                     // Fallback to Authority line

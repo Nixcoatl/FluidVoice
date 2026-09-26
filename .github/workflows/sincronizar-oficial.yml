@@ -1,0 +1,82 @@
+name: Sincronizar con FluidVoice oficial
+
+# Cada día revisa si el FluidVoice oficial (altic-dev/FluidVoice) tiene cambios nuevos.
+# Si los hay, los mezcla con las mejoras personales y lanza una compilación (que publica
+# una Release y la app instalada la ofrece como actualización). Si no se pueden mezclar
+# solos, abre un issue para resolverlo a mano. Corre en GitHub: no depende de la Mac.
+on:
+  schedule:
+    - cron: '0 11 * * *' # 05:00 hora de Ciudad de México
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+        fetch-depth: 0
+
+    - name: Merge upstream
+      run: |
+        set -uo pipefail
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git remote add upstream https://github.com/altic-dev/FluidVoice.git
+        git fetch --quiet upstream main
+
+        if git merge-base --is-ancestor upstream/main HEAD; then
+          echo "Ya estás al día con el FluidVoice oficial."
+          exit 0
+        fi
+        NEW_COMMITS="$(git log --oneline HEAD..upstream/main | wc -l | tr -d ' ')"
+        SUMMARY="$(git log --format='- %s' HEAD..upstream/main | head -40)"
+
+        open_issue() {
+          local title="$1" body="$2"
+          if gh issue list --state open --label sync --json number --jq '.[0].number' | grep -q .; then
+            echo "Ya hay un issue de sincronización abierto."
+          else
+            gh label create sync --color FBCA04 --description "Sincronización con FluidVoice oficial" 2>/dev/null || true
+            gh issue create --title "$title" --label sync --body "$(printf '%s\n' "$body" | sed 's/^ *//')"
+          fi
+        }
+
+        if ! git merge --no-edit upstream/main; then
+          CONFLICTS="$(git diff --name-only --diff-filter=U)"
+          git merge --abort
+          open_issue "FluidVoice oficial trae $NEW_COMMITS cambios que chocan con tus mejoras" \
+            "La sincronización automática no pudo mezclar los cambios porque tocan las mismas líneas que tus mejoras.
+
+        Archivos en conflicto:
+        $CONFLICTS
+
+        Cambios nuevos del oficial:
+        $SUMMARY
+
+        Pídele a Claude que lo resuelva en ~/Documents/FluidVoice."
+          exit 0
+        fi
+
+        if ! git push origin HEAD:main; then
+          open_issue "No se pudo subir la sincronización con FluidVoice oficial" \
+            "La mezcla funcionó, pero GitHub no permitió subirla automáticamente (suele pasar cuando el oficial cambia sus archivos de workflows).
+
+        Cambios nuevos del oficial:
+        $SUMMARY
+
+        Pídele a Claude que sincronice a mano en ~/Documents/FluidVoice."
+          exit 0
+        fi
+
+        echo "Mezclados $NEW_COMMITS cambios del oficial. Lanzando compilación..."
+        gh workflow run mi-build.yml --ref main

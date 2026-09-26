@@ -437,7 +437,7 @@ struct SettingsView: View {
                                         .foregroundStyle(self.settingsSecondaryText)
                                 }
 
-                                Text("Current version: \(self.currentAppVersion)")
+                                Text("Current version: \(self.currentAppVersion) · Nixcoatl personal build")
                                     .font(self.theme.typography.bodySmall)
                                     .foregroundStyle(self.settingsSecondaryText)
                             }
@@ -450,9 +450,9 @@ struct SettingsView: View {
                                         do {
                                             let includePrerelease = SettingsStore.shared.betaReleasesEnabled
                                             try await SimpleUpdater.shared.checkAndUpdate(
-                                                owner: "altic-dev",
-                                                repo: "Fluid-oss",
-                                                includePrerelease: includePrerelease
+                                                owner: SimpleUpdater.releaseOwner,
+                                                repo: SimpleUpdater.releaseRepo,
+                                                includePrerelease: SimpleUpdater.includesPrereleases
                                             )
                                         } catch SimpleUpdateError.updateAlreadyInProgress {
                                             DebugLogger.shared.info(
@@ -837,6 +837,29 @@ struct SettingsView: View {
                                             description: "Break long dictations into paragraphs at sentence boundaries. Runs on your Mac.",
                                             isOn: self.$settings.smartParagraphsEnabled
                                         )
+                                        Divider().opacity(0.2)
+
+                                        HStack(alignment: .center) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text("Numbers as Digits")
+                                                    .font(self.theme.typography.bodyStrong)
+                                                    .foregroundStyle(self.settingsTitleText)
+                                                Text("Write spoken Spanish numbers as digits: \"diecinueve punto seis\" → 19.6, \"dos mil veintidós\" → 2022.")
+                                                    .font(self.theme.typography.bodySmall)
+                                                    .foregroundStyle(self.settingsSecondaryText)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                                            Picker("", selection: self.$settings.numberFormattingMode) {
+                                                ForEach(SpanishNumberNormalizer.Mode.allCases) { mode in
+                                                    Text(mode.displayName).tag(mode)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                            .fluidDropdownStyle()
+                                            .frame(width: 170, alignment: .trailing)
+                                        }
                                         Divider().opacity(0.2)
 
                                         self.optionToggleRow(
@@ -1299,6 +1322,20 @@ struct SettingsView: View {
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
                         VStack(alignment: .leading, spacing: 12) {
+                            self.optionToggleRow(
+                                title: "Menu Bar Notch (Experimental)",
+                                description: "Show a small notch-style tab in the middle of the menu bar with the waveform and timer while you dictate.",
+                                isOn: self.$settings.menuBarNotchEnabled
+                            )
+                            if self.settings.menuBarNotchEnabled {
+                                self.optionToggleRow(
+                                    title: "Hide Regular Overlay",
+                                    description: "Use only the menu bar notch. You won't see the live transcription while speaking.",
+                                    isOn: self.$settings.menuBarNotchReplacesOverlay
+                                )
+                            }
+                            Divider().opacity(0.2)
+
                             if self.settings.overlayPosition == .bottom {
                                 self.overlayMaterialSettings
                                 Divider().padding(.vertical, 8)
@@ -1875,10 +1912,10 @@ struct SettingsView: View {
         Task { @MainActor in
             do {
                 let options = try await SimpleUpdater.shared.fetchRecentReleaseBuildOptions(
-                    owner: "altic-dev",
-                    repo: "Fluid-oss",
+                    owner: SimpleUpdater.releaseOwner,
+                    repo: SimpleUpdater.releaseRepo,
                     limit: 3,
-                    includePrerelease: SettingsStore.shared.betaReleasesEnabled
+                    includePrerelease: SimpleUpdater.includesPrereleases
                 )
                 self.presentPreviousBuildPicker(options)
             } catch {
@@ -2011,6 +2048,31 @@ struct SettingsView: View {
 
     private func audioHistoryControls() -> some View {
         VStack(spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Delete Audio After")
+                        .font(self.theme.typography.bodyStrong)
+                        .foregroundStyle(self.settingsTitleText)
+                    Text("Older recordings are removed automatically. Transcript text is kept.")
+                        .font(self.theme.typography.bodySmall)
+                        .foregroundStyle(self.settingsSecondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Picker("", selection: self.$settings.audioRetentionDays) {
+                    Text("1 day").tag(1)
+                    Text("3 days").tag(3)
+                    Text("7 days").tag(7)
+                    Text("14 days").tag(14)
+                    Text("30 days").tag(30)
+                    Text("Never").tag(0)
+                }
+                .pickerStyle(.menu)
+                .fluidDropdownStyle()
+                .frame(width: 170, alignment: .trailing)
+            }
+            Divider().opacity(0.2)
+
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Audio Storage")

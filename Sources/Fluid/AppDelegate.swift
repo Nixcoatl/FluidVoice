@@ -103,6 +103,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         AnalyticsService.shared.bootstrap()
         SearchIndexCoordinator.shared.start()
 
+        // Transcribe any dictation left behind by a crash or forced quit into History.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            RecordingRecoveryJournal.shared.recoverLeftoverRecordings(using: AppServices.shared)
+        }
+
         // Check for updates automatically if enabled (initial check on launch)
         self.checkForUpdatesAutomatically()
 
@@ -462,9 +468,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             do {
                 // Use our tolerant updater to handle v-prefixed tags and 2-part versions
                 try await SimpleUpdater.shared.checkAndUpdate(
-                    owner: "altic-dev",
-                    repo: "Fluid-oss",
-                    includePrerelease: includePrerelease
+                    owner: SimpleUpdater.releaseOwner,
+                    repo: SimpleUpdater.releaseRepo,
+                    includePrerelease: SimpleUpdater.includesPrereleases
                 )
             } catch SimpleUpdateError.updateAlreadyInProgress {
                 DebugLogger.shared.info("Update installation already in progress", source: "AppDelegate")
@@ -511,9 +517,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             do {
                 let includePrerelease = SettingsStore.shared.betaReleasesEnabled
                 let result = try await SimpleUpdater.shared.checkForUpdate(
-                    owner: "altic-dev",
-                    repo: "Fluid-oss",
-                    includePrerelease: includePrerelease
+                    owner: SimpleUpdater.releaseOwner,
+                    repo: SimpleUpdater.releaseRepo,
+                    includePrerelease: SimpleUpdater.includesPrereleases
                 )
 
                 // Update the last check date regardless of result

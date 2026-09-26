@@ -1938,6 +1938,37 @@ final class SettingsStore: ObservableObject {
         set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.showRecordingTimer) }
     }
 
+    /// Saved dictation audio older than this many days is deleted; the text stays. 0 keeps audio.
+    var audioRetentionDays: Int {
+        get { self.defaults.object(forKey: Keys.audioRetentionDays) as? Int ?? 7 }
+        set {
+            objectWillChange.send()
+            self.defaults.set(max(0, newValue), forKey: Keys.audioRetentionDays)
+            TranscriptionHistoryStore.shared.pruneAudioOlderThanRetention()
+        }
+    }
+
+    /// How spoken Spanish numbers are written (default: 10 and above plus decimals as digits).
+    var numberFormattingMode: SpanishNumberNormalizer.Mode {
+        get {
+            self.defaults.string(forKey: Keys.numberFormattingMode)
+                .flatMap(SpanishNumberNormalizer.Mode.init(rawValue:)) ?? .largeAndDecimals
+        }
+        set { objectWillChange.send(); self.defaults.set(newValue.rawValue, forKey: Keys.numberFormattingMode) }
+    }
+
+    /// Experimental: show a small "notch" tab in the menu bar while dictating.
+    var menuBarNotchEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.menuBarNotchEnabled) }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.menuBarNotchEnabled) }
+    }
+
+    /// With the menu bar notch on, skip the regular recording overlay.
+    var menuBarNotchReplacesOverlay: Bool {
+        get { self.defaults.bool(forKey: Keys.menuBarNotchReplacesOverlay) }
+        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.menuBarNotchReplacesOverlay) }
+    }
+
     var enableStreamingPreview: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.enableStreamingPreview)
@@ -5837,6 +5868,10 @@ private extension SettingsStore {
         static let smartParagraphsEnabled = "SmartParagraphsEnabled"
         static let keepOverlayWhileProcessing = "KeepOverlayWhileProcessing"
         static let showRecordingTimer = "ShowRecordingTimer"
+        static let audioRetentionDays = "AudioRetentionDays"
+        static let numberFormattingMode = "NumberFormattingMode"
+        static let menuBarNotchEnabled = "MenuBarNotchEnabled"
+        static let menuBarNotchReplacesOverlay = "MenuBarNotchReplacesOverlay"
         static let enableStreamingPreview = "EnableStreamingPreview"
         static let experimentalParakeetUnifiedFinalEnabled = "ExperimentalParakeetUnifiedFinalEnabled"
         static let returnDictationToStartingField = "ReturnDictationToStartingField"

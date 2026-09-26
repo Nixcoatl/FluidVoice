@@ -355,6 +355,7 @@ final class TranscriptionHistoryStore: ObservableObject {
 
     /// Delete a specific entry
     func deleteEntry(id: UUID) {
+        StatsArchiveStore.shared.archiveRemovedEntries(self.entries.filter { $0.id == id })
         self.invalidateAutomaticAudioBudgetMeasurement()
         if let audio = self.entries.first(where: { $0.id == id })?.audio {
             DictationAudioHistoryStore.shared.deleteAudio(fileName: audio.fileName)
@@ -375,6 +376,7 @@ final class TranscriptionHistoryStore: ObservableObject {
 
     /// Delete multiple entries
     func deleteEntries(ids: Set<UUID>) {
+        StatsArchiveStore.shared.archiveRemovedEntries(self.entries.filter { ids.contains($0.id) })
         self.invalidateAutomaticAudioBudgetMeasurement()
         for entry in self.entries where ids.contains(entry.id) {
             if let audio = entry.audio {
@@ -396,6 +398,7 @@ final class TranscriptionHistoryStore: ObservableObject {
 
     /// Clear all history
     func clearAllHistory() {
+        StatsArchiveStore.shared.archiveRemovedEntries(self.entries)
         self.audioSaveGeneration &+= 1
         self.invalidateAutomaticAudioBudgetMeasurement()
         self.deleteAllAudioFiles()
@@ -472,6 +475,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         }
         self.entries[index] = self.entries[index].replacingAudio(audio)
         self.persist(upserts: [self.entries[index]])
+        self.pruneAudioOlderThanRetention()
         self.scheduleAutomaticAudioPruneToBudget()
     }
 
@@ -487,6 +491,28 @@ final class TranscriptionHistoryStore: ObservableObject {
         self.persist(upserts: changed)
         DebugLogger.shared.info("Deleted saved dictation audio (\(removedCount) entries)", source: "TranscriptionHistoryStore")
         return removedCount
+    }
+
+    /// Drops saved audio older than the retention window (Settings, default 7 days).
+    /// The transcript text stays in History.
+    @discardableResult
+    func pruneAudioOlderThanRetention(now: Date = Date()) -> Int {
+        guard self.hasLoaded else { return 0 }
+        let days = SettingsStore.shared.audioRetentionDays
+        guard days > 0 else { return 0 }
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+        var changed: [TranscriptionHistoryEntry] = []
+        for index in self.entries.indices {
+            guard let audio = self.entries[index].audio, self.entries[index].timestamp < cutoff else { continue }
+            DictationAudioHistoryStore.shared.deleteAudio(fileName: audio.fileName)
+            self.entries[index] = self.entries[index].replacingAudio(nil)
+            changed.append(self.entries[index])
+        }
+        guard !changed.isEmpty else { return 0 }
+        self.invalidateAutomaticAudioBudgetMeasurement()
+        self.persist(upserts: changed)
+        DebugLogger.shared.info("Deleted audio older than \(days) days (\(changed.count) entries)", source: "TranscriptionHistoryStore")
+        return changed.count
     }
 
     @discardableResult
@@ -591,6 +617,7 @@ final class TranscriptionHistoryStore: ObservableObject {
                 }
                 self.pendingUpserts.removeAll()
                 self.pendingDeletes.removeAll()
+                self.pruneAudioOlderThanRetention()
                 self.pendingReplacement = false
             } catch {
                 self.persistenceError = "History could not be loaded. New dictations are kept in memory until you retry. \(error.localizedDescription)"

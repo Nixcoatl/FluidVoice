@@ -1019,6 +1019,13 @@ struct NotchExpandedView: View {
                 )
                 .frame(width: 48, height: 18)
 
+                if self.settings.showRecordingTimer,
+                   let startedAt = self.contentState.recordingStartedAt,
+                   !self.contentState.isProcessing
+                {
+                    RecordingElapsedTimeText(startedAt: startedAt, fontSize: 10)
+                }
+
                 self.promptSelectorControl
 
                 if self.showsSpokenSendIndicator {

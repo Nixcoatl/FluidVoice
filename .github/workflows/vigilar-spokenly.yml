@@ -1,0 +1,60 @@
+name: Vigilar novedades de Spokenly
+
+# Cada lunes lee el feed de actualizaciones de Spokenly (Sparkle appcast) y, si hay
+# versiones nuevas desde el último aviso, abre un issue con sus notas (llega por correo).
+on:
+  schedule:
+    - cron: '0 14 * * 1' # lunes 08:00 hora de Ciudad de México
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+    - name: Check appcast
+      run: |
+        set -euo pipefail
+        curl -fsSL https://spokenly.app/appcast.xml -o appcast.xml
+        # Last version already reported: highest "Spokenly X.Y.Z" issue title with the spokenly label.
+        LAST="$(gh issue list --state all --label spokenly --limit 50 --json title --jq '.[].title' \
+          | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V | tail -1 || true)"
+        python3 - "$LAST" <<'PY' > report.md
+        import re, sys, html
+        import xml.etree.ElementTree as ET
+        last = sys.argv[1] if len(sys.argv) > 1 else ""
+        ns = {"sparkle": "http://www.andymatuschak.org/xml-namespaces/sparkle"}
+        def key(v): return tuple(int(x) for x in v.split("."))
+        items = []
+        for item in ET.parse("appcast.xml").getroot().iter("item"):
+            version = item.findtext("sparkle:shortVersionString", namespaces=ns) or ""
+            if not version or (last and key(version) <= key(last)):
+                continue
+            notes = item.findtext("description") or ""
+            notes = [html.unescape(re.sub(r"<[^>]+>", "", li)).strip() for li in re.findall(r"<li>(.*?)</li>", notes, re.S)]
+            items.append((version, item.findtext("pubDate") or "", notes))
+        items.sort(key=lambda i: key(i[0]), reverse=True)
+        if not items:
+            sys.exit(0)
+        print(f"TITLE=Spokenly {items[0][0]}")
+        for version, date, notes in items:
+            print(f"### {version} — {date[:16]}")
+            for note in notes:
+                print(f"- {note}")
+            print()
+        PY
+        if [ ! -s report.md ]; then
+          echo "Sin novedades de Spokenly desde la versión $LAST."
+          exit 0
+        fi
+        TITLE="$(head -1 report.md | sed 's/^TITLE=//')"
+        tail -n +2 report.md > body.md
+        printf '\n¿Vale la pena traer algo de esto a tu FluidVoice? Pregúntale a Claude.\n' >> body.md
+        gh label create spokenly --color 5319E7 --description "Novedades de Spokenly" 2>/dev/null || true
+        gh issue create --title "$TITLE: novedades" --label spokenly --body-file body.md

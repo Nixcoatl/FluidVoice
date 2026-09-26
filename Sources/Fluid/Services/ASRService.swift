@@ -2060,6 +2060,15 @@ final class ASRService: ObservableObject {
         self.audioBuffer.getRange(startingAt: offset, count: count)
     }
 
+    /// Samples captured so far in the current recording (16 kHz mono), for the crash-recovery journal.
+    var recoveryJournalSampleCount: Int {
+        self.audioBuffer.count
+    }
+
+    func recoveryJournalSamples(from offset: Int, count: Int) -> [Float] {
+        self.audioBuffer.getRange(startingAt: offset, count: count)
+    }
+
     private var streamingChunkDurationSeconds: Double {
         let selectedModel = SettingsStore.shared.selectedSpeechModel
         return selectedModel.streamingPreviewIntervalSeconds

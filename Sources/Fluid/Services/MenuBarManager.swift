@@ -160,8 +160,11 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
                     if NotchContentState.shared.recordingStartedAt == nil {
                         NotchContentState.shared.recordingStartedAt = Date()
                     }
+                    RecordingRecoveryJournal.shared.begin(asr: asrService)
+                    MenuBarNotchController.shared.attach(audioPublisher: asrService.audioLevelPublisher)
                 } else {
                     NotchContentState.shared.recordingStartedAt = nil
+                    RecordingRecoveryJournal.shared.end()
                 }
                 if isRunning == false, self.isProcessingActive {
                     self.hasDeferredStoppedRecordingState = true
@@ -1273,9 +1276,9 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         Task { @MainActor in
             do {
                 try await SimpleUpdater.shared.checkAndUpdate(
-                    owner: "altic-dev",
-                    repo: "Fluid-oss",
-                    includePrerelease: SettingsStore.shared.betaReleasesEnabled
+                    owner: SimpleUpdater.releaseOwner,
+                    repo: SimpleUpdater.releaseRepo,
+                    includePrerelease: SimpleUpdater.includesPrereleases
                 )
             } catch SimpleUpdateError.updateAlreadyInProgress {
                 DebugLogger.shared.info("Update installation already in progress", source: "MenuBarManager")
@@ -1354,10 +1357,10 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         Task { @MainActor in
             do {
                 let options = try await SimpleUpdater.shared.fetchRecentReleaseBuildOptions(
-                    owner: "altic-dev",
-                    repo: "Fluid-oss",
+                    owner: SimpleUpdater.releaseOwner,
+                    repo: SimpleUpdater.releaseRepo,
                     limit: 3,
-                    includePrerelease: SettingsStore.shared.betaReleasesEnabled
+                    includePrerelease: SimpleUpdater.includesPrereleases
                 )
                 self.presentPreviousBuildPicker(options)
             } catch {

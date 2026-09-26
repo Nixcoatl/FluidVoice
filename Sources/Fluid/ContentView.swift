@@ -3158,6 +3158,7 @@ struct ContentView: View {
         // Apply GAAV formatting as the FINAL step (after AI post-processing)
         // This ensures the user's preference for no capitalization/period is respected
         finalText = ASRService.applyGAAVFormatting(finalText)
+        finalText = ASRService.applyNumberFormatting(finalText)
         finalText = ASRService.applySmartParagraphs(finalText)
         // Apply Continuous Dictation Mode after GAAV so smart caps use the field
         // context captured at recording start, and the trailing space enables chaining.
@@ -4225,6 +4226,7 @@ struct ContentView: View {
             windowTitle: appInfo.windowTitle
         )
         finalText = ASRService.applyGAAVFormatting(finalText)
+        finalText = ASRService.applyNumberFormatting(finalText)
         finalText = ASRService.applySmartParagraphs(finalText)
         let precedingText = SettingsStore.shared.needsDictationFormattingContext
             ? TypingService.textBeforeCursorInFocusedField()
@@ -4930,6 +4932,42 @@ struct ContentView: View {
     }
 
     @discardableResult
+    /// Esc on a dictation at least this long still transcribes it into History (never pasted).
+    private static let cancelledDictationKeepThresholdSeconds: TimeInterval = 30
+
+    /// Transcribes a long dictation cancelled with Esc and keeps it in History only, so an
+    /// accidental Esc never throws away minutes of speech. Nothing is typed or copied.
+    private func saveCancelledDictationToHistory() {
+        let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
+        let model = self.currentTranscriptionModelInfo().model
+        self.clearActiveRecordingMode()
+        Task { @MainActor in
+            let transcript = await self.asr.stop()
+            let audioSnapshot = self.asr.consumeLastCompletedAudioSnapshot()
+            let text = ASRService.applySmartParagraphs(
+                ASRService.applyNumberFormatting(transcript.trimmingCharacters(in: .whitespacesAndNewlines))
+            )
+            guard !text.isEmpty, SettingsStore.shared.saveTranscriptionHistory else {
+                DebugLogger.shared.info("Cancelled dictation had no text to keep", source: "ContentView")
+                return
+            }
+            let entryID = UUID()
+            let timestamp = Date()
+            StatsArchiveStore.shared.markCancelledEntry(entryID)
+            TranscriptionHistoryStore.shared.addEntry(
+                id: entryID,
+                timestamp: timestamp,
+                rawText: transcript,
+                processedText: text,
+                appName: appInfo.name,
+                windowTitle: "Cancelled with Esc (not pasted)",
+                wasAIProcessed: false
+            )
+            self.persistDictationAudioIfNeeded(audioSnapshot, entryID: entryID, timestamp: timestamp, model: model)
+            DebugLogger.shared.info("Cancelled dictation kept in history (chars: \(text.count))", source: "ContentView")
+        }
+    }
+
     private func handleCancelShortcut() -> Bool {
         var handled = false
 
@@ -4949,10 +4987,22 @@ struct ContentView: View {
         if self.asr.isRunningOrStarting {
             DebugLogger.shared.debug("Cancel shortcut: cancelling ASR recording", source: "ContentView")
             let isOnboardingTryout = self.isOnboardingVoicePlaygroundStepActive
-            Task {
-                await self.asr.stopWithoutTranscription()
-                if isOnboardingTryout {
-                    AnalyticsService.shared.recordOnboardingTryoutAttemptResult(outcome: .cancelled)
+            let recordedSeconds = NotchContentState.shared.recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            let isDictation = self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode
+                || self.activeRecordingMode == .none
+            if isDictation, !isOnboardingTryout {
+                StatsArchiveStore.shared.recordCancellation()
+            }
+            if isDictation, !isOnboardingTryout, self.asr.isRunning,
+               recordedSeconds >= Self.cancelledDictationKeepThresholdSeconds
+            {
+                self.saveCancelledDictationToHistory()
+            } else {
+                Task {
+                    await self.asr.stopWithoutTranscription()
+                    if isOnboardingTryout {
+                        AnalyticsService.shared.recordOnboardingTryoutAttemptResult(outcome: .cancelled)
+                    }
                 }
             }
             self.cancelPrewarmDictationIfNeeded()

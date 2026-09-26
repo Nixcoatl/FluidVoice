@@ -3876,7 +3876,7 @@ struct BottomOverlayView: View {
 /// The chip resolves out of a soft blur while the pill widens, so the growth
 /// reads as one gesture instead of a width change followed by a pop-in.
 /// Small m:ss (or h:mm:ss) counter shown next to the waveform while recording.
-private struct RecordingElapsedTimeText: View {
+struct RecordingElapsedTimeText: View {
     let startedAt: Date
     let fontSize: CGFloat
 

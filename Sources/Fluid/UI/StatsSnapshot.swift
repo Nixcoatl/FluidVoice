@@ -12,6 +12,8 @@ nonisolated struct StatsSnapshot: Sendable {
     var timedWords = 0
     var timedMilliseconds = 0
     var aiProcessedCount = 0
+    /// Dictations cancelled with Esc (saved or not).
+    var cancelledCount = 0
     var longestTranscriptionWords = 0
     var mostWordsInDay = 0
     var mostTranscriptionsInDay = 0
@@ -33,6 +35,12 @@ nonisolated struct StatsSnapshot: Sendable {
 
     var averageWordsPerTranscription: Int {
         self.totalTranscriptions == 0 ? 0 : self.totalWords / self.totalTranscriptions
+    }
+
+    /// Share of started dictations that ended with Esc.
+    var cancellationRate: Int {
+        let started = self.totalTranscriptions + self.cancelledCount
+        return started == 0 ? 0 : self.cancelledCount * 100 / started
     }
 
     var aiEnhancementRate: Int {
@@ -87,32 +95,81 @@ nonisolated struct StatsSnapshot: Sendable {
         return result
     }
 
-    static func build(entries: [TranscriptionHistoryEntry], now: Date, calendar: Calendar) throws -> Self {
+    private struct Record {
+        let timestamp: Date
+        let words: Int
+        let characters: Int
+        let appName: String
+        let audioMilliseconds: Int?
+        let wasAIProcessed: Bool
+        let usedFluidIntelligence: Bool
+        let fluidFixedWords: Int
+    }
+
+    static func wordCount(_ text: String) -> Int {
+        text.components(separatedBy: .whitespacesAndNewlines).lazy.filter { !$0.isEmpty }.count
+    }
+
+    static func build(
+        entries: [TranscriptionHistoryEntry],
+        archive: StatsArchive = StatsArchive(),
+        now: Date,
+        calendar: Calendar
+    ) throws -> Self {
         var result = Self()
         var dayWords: [Date: Int] = [:]
         var dayCounts: [Date: Int] = [:]
         var appCounts: [String: Int] = [:]
         var hours = Array(repeating: 0, count: 24)
-        result.totalTranscriptions = entries.count
-        for (index, entry) in entries.enumerated() {
+        var records: [Record] = []
+        records.reserveCapacity(entries.count + archive.archivedDictations.count)
+        for (index, entry) in entries.enumerated() where !archive.cancelledEntryIDs.contains(entry.id) {
             if index.isMultiple(of: 128) { try Task.checkCancellation() }
-            let words = entry.processedText.components(separatedBy: .whitespacesAndNewlines).lazy.filter { !$0.isEmpty }.count
-            let day = calendar.startOfDay(for: entry.timestamp)
+            let usedFluid = entry.wasAIProcessed && entry.processingModel?.lowercased().hasPrefix("fluid-1") == true
+            records.append(Record(
+                timestamp: entry.timestamp,
+                words: Self.wordCount(entry.processedText),
+                characters: entry.processedText.count,
+                appName: entry.appName,
+                audioMilliseconds: entry.audio?.durationMilliseconds,
+                wasAIProcessed: entry.wasAIProcessed,
+                usedFluidIntelligence: usedFluid,
+                fluidFixedWords: usedFluid ? Self.changedWordCount(raw: entry.rawText, processed: entry.processedText) : 0
+            ))
+        }
+        records += archive.archivedDictations.map { archived in
+            Record(
+                timestamp: archived.timestamp,
+                words: archived.words,
+                characters: archived.characters,
+                appName: archived.appName,
+                audioMilliseconds: archived.audioMilliseconds,
+                wasAIProcessed: archived.wasAIProcessed,
+                usedFluidIntelligence: archived.usedFluidIntelligence,
+                fluidFixedWords: archived.fluidFixedWords
+            )
+        }
+        result.totalTranscriptions = records.count
+        result.cancelledCount = archive.cancellations.count
+        for (index, record) in records.enumerated() {
+            if index.isMultiple(of: 128) { try Task.checkCancellation() }
+            let words = record.words
+            let day = calendar.startOfDay(for: record.timestamp)
             dayWords[day, default: 0] += words
             dayCounts[day, default: 0] += 1
-            appCounts[entry.appName.isEmpty ? "Unknown" : entry.appName, default: 0] += 1
-            hours[calendar.component(.hour, from: entry.timestamp)] += 1
+            appCounts[record.appName.isEmpty ? "Unknown" : record.appName, default: 0] += 1
+            hours[calendar.component(.hour, from: record.timestamp)] += 1
             result.totalWords += words
-            result.totalCharacters += entry.processedText.count
-            if let milliseconds = entry.audio?.durationMilliseconds, milliseconds > 0 {
+            result.totalCharacters += record.characters
+            if let milliseconds = record.audioMilliseconds, milliseconds > 0 {
                 result.timedWords += words
                 result.timedMilliseconds += milliseconds
             }
             result.longestTranscriptionWords = max(result.longestTranscriptionWords, words)
-            if entry.wasAIProcessed { result.aiProcessedCount += 1 }
-            if entry.wasAIProcessed, entry.processingModel?.lowercased().hasPrefix("fluid-1") == true {
+            if record.wasAIProcessed { result.aiProcessedCount += 1 }
+            if record.usedFluidIntelligence {
                 result.hasFluidIntelligenceUse = true
-                result.fluidFixedWords += Self.changedWordCount(raw: entry.rawText, processed: entry.processedText)
+                result.fluidFixedWords += record.fluidFixedWords
             }
         }
         try Task.checkCancellation()
@@ -130,7 +187,7 @@ nonisolated struct StatsSnapshot: Sendable {
         let days = dayCounts.keys.sorted(by: >)
         (result.currentStreak, result.bestStreak) = try Self.streaks(days: days, today: today, calendar: calendar, weekdays: false)
         (result.weekdayCurrentStreak, result.weekdayBestStreak) = try Self.streaks(days: days, today: today, calendar: calendar, weekdays: true)
-        if !entries.isEmpty, let hour = hours.indices.max(by: { hours[$0] < hours[$1] }) {
+        if !records.isEmpty, let hour = hours.indices.max(by: { hours[$0] < hours[$1] }) {
             let formatter = DateFormatter()
             formatter.calendar = calendar
             formatter.timeZone = calendar.timeZone
