@@ -1,0 +1,71 @@
+name: Compilar mi FluidVoice
+
+# Compila la app en una Mac de GitHub y la deja como .zip descargable
+# en la pestaña Actions. Se ejecuta con cada push a main o a mano.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: mi-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Build (Release, sin firma de Apple)
+      run: |
+        set -o pipefail
+        xcodebuild build \
+          -project Fluid.xcodeproj \
+          -scheme Fluid \
+          -configuration Release \
+          -destination 'generic/platform=macOS' \
+          -derivedDataPath DerivedData \
+          ARCHS=arm64 \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGN_STYLE=Manual \
+          DEVELOPMENT_TEAM="" \
+          | tail -n 200
+
+    - name: Normalize CTranscribe.framework and ad-hoc sign
+      run: |
+        set -euo pipefail
+        APP="DerivedData/Build/Products/Release/FluidVoice.app"
+        FW="$APP/Contents/Frameworks/CTranscribe.framework"
+        if [ -d "$FW/Versions/A" ]; then
+          for p in "$FW/Versions/Current" "$FW/CTranscribe" "$FW/Resources"; do
+            rm -rf "$p"
+          done
+          ln -s A "$FW/Versions/Current"
+          ln -s Versions/Current/CTranscribe "$FW/CTranscribe"
+          ln -s Versions/Current/Resources "$FW/Resources"
+          codesign --force --sign - --options runtime --timestamp=none "$FW"
+        fi
+        codesign --force --sign - --options runtime --timestamp=none \
+          --entitlements Fluid.entitlements "$APP"
+        codesign --verify --deep --strict --verbose=2 "$APP"
+
+    - name: Zip app
+      run: |
+        cd DerivedData/Build/Products/Release
+        ditto -c -k --keepParent FluidVoice.app "$GITHUB_WORKSPACE/FluidVoice.zip"
+
+    - name: Upload app
+      uses: actions/upload-artifact@v4
+      with:
+        name: FluidVoice-${{ github.sha }}
+        path: FluidVoice.zip
+        retention-days: 30
