@@ -823,6 +823,15 @@ struct SettingsView: View {
                                         .settingsSearchTarget(.activationMode)
                                         Divider().opacity(0.2)
 
+                                        if self.hotkeyMode != .hold {
+                                            self.optionToggleRow(
+                                                title: "Double-Tap to Start",
+                                                description: "Tap a modifier-key shortcut twice quickly to start recording, so a single accidental press does nothing. One tap still stops.",
+                                                isOn: self.$settings.doubleTapToStart
+                                            )
+                                            Divider().opacity(0.2)
+                                        }
+
                                         self.optionToggleRow(
                                             title: "Copy to Clipboard",
                                             description: "Automatically copy transcribed text to clipboard as a backup.",

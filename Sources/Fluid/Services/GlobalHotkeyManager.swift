@@ -282,6 +282,12 @@ final class GlobalHotkeyManager: NSObject {
     private var pasteLastTranscriptionCallback: (() -> Void)?
     private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
     private let automaticTapThresholdSeconds: TimeInterval = 0.4
+    /// Max gap between the first tap's release and the second press for double-tap-to-start.
+    private let doubleTapWindowSeconds: TimeInterval = 0.4
+    /// Uptime of the idle tap that armed double-tap-to-start; nil when not armed.
+    private var doubleTapArmedAt: TimeInterval?
+    /// Automatic-mode presses held back while waiting for the second tap.
+    private var doubleTapGatedTypes: Set<HotkeyHoldModeType> = []
     private var currentInputTiming: HotkeyInputTiming?
     private var modifierPressReceivedAt: TimeInterval?
     private var currentStopPressReceivedAt: TimeInterval?
@@ -1894,6 +1900,31 @@ final class GlobalHotkeyManager: NSObject {
         }
     }
 
+    /// True when a press must not start recording yet: double-tap-to-start is on, nothing is
+    /// recording, and this press is not the second tap of a double tap. Consumes the armed tap.
+    private func shouldWaitForSecondTap() -> Bool {
+        guard SettingsStore.shared.doubleTapToStart, !self.asrService.isRunningOrStarting else {
+            self.doubleTapArmedAt = nil
+            return false
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let armedAt = self.doubleTapArmedAt, now - armedAt <= self.doubleTapWindowSeconds {
+            self.doubleTapArmedAt = nil
+            return false
+        }
+        return true
+    }
+
+    private func armDoubleTap(for type: HotkeyHoldModeType) {
+        self.doubleTapArmedAt = ProcessInfo.processInfo.systemUptime
+        DebugLogger.shared.info("\(self.label(for: type)) first tap - waiting for second tap to start", source: "GlobalHotkeyManager")
+    }
+
+    private func resetDoubleTapTracking() {
+        self.doubleTapArmedAt = nil
+        self.doubleTapGatedTypes.removeAll()
+    }
+
     private func scheduleModifierOnlyStart(for behavior: ModifierOnlyShortcutBehavior) {
         guard self.hotkeyMode != .toggle, !behavior.isModeKeyPressed() else { return }
 
@@ -1907,6 +1938,10 @@ final class GlobalHotkeyManager: NSObject {
         }
 
         guard self.hotkeyMode != .automatic || !wasTargetActive else { return }
+        if self.hotkeyMode == .automatic, self.shouldWaitForSecondTap() {
+            self.doubleTapGatedTypes.insert(behavior.holdModeType)
+            return
+        }
         DebugLogger.shared.info(behavior.holdStartMessage, source: "GlobalHotkeyManager")
         if self.hotkeyMode == .hold {
             self.markHoldModeStartTriggered(for: behavior.holdModeType)
@@ -1935,6 +1970,13 @@ final class GlobalHotkeyManager: NSObject {
             if behavior.isModeKeyPressed() {
                 behavior.setModeKeyPressed(false)
             }
+            if self.doubleTapGatedTypes.remove(behavior.holdModeType) != nil {
+                let press = self.finishAutomaticPress(for: behavior.holdModeType)
+                if wasCleanPress, press.duration < self.automaticTapThresholdSeconds {
+                    self.armDoubleTap(for: behavior.holdModeType)
+                }
+                return
+            }
             if wasCleanPress {
                 self.handleAutomaticKeyRelease(
                     for: behavior.holdModeType,
@@ -1952,7 +1994,11 @@ final class GlobalHotkeyManager: NSObject {
             }
         case .toggle:
             if wasCleanPress {
-                behavior.onToggleRelease()
+                if self.shouldWaitForSecondTap() {
+                    self.armDoubleTap(for: behavior.holdModeType)
+                } else {
+                    behavior.onToggleRelease()
+                }
             } else {
                 DebugLogger.shared.debug(behavior.toggleIgnoredMessage, source: "GlobalHotkeyManager")
             }
@@ -1972,6 +2018,7 @@ final class GlobalHotkeyManager: NSObject {
         self.otherKeyPressedDuringModifier = false
         self.modifierPressStartTime = nil
         self.clearAutomaticPressTracking()
+        self.resetDoubleTapTracking()
         self.isKeyPressed = false
         self.isPromptModeKeyPressed = false
         self.isCommandModeKeyPressed = false
@@ -2324,6 +2371,7 @@ final class GlobalHotkeyManager: NSObject {
 
         self.hotkeyMode = mode
         self.clearAutomaticPressTracking()
+        self.resetDoubleTapTracking()
         self.isKeyPressed = false
         self.isPromptModeKeyPressed = false
         self.isCommandModeKeyPressed = false
