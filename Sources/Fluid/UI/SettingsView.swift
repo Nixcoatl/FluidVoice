@@ -825,7 +825,7 @@ struct SettingsView: View {
 
                                         self.optionToggleRow(
                                             title: "Use the Mac's Dictation Key",
-                                            description: "The microphone key (F5) starts FluidVoice dictation instead of Apple Dictation. Works alongside your shortcut.",
+                                            description: "The microphone key (F5) starts FluidVoice instead of Apple Dictation. While on, it's the only activation key: your custom dictation shortcut is paused.",
                                             isOn: self.$settings.dictationKeyStartsFluidVoice
                                         )
                                         Divider().opacity(0.2)

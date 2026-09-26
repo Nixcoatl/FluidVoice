@@ -285,6 +285,12 @@ final class GlobalHotkeyManager: NSObject {
     /// The Mac's Dictation (microphone) key, F5 on recent MacBooks. It arrives as a plain
     /// key-down/key-up pair with this virtual keycode and the secondary-Fn flag set.
     private static let dictationKeyCode: UInt16 = 0xB0
+
+    /// Only one activation key at a time: while the Dictation key is in use, the custom
+    /// dictation shortcuts (keyboard, modifier-only, mouse) are paused.
+    private var primaryShortcutsActive: Bool {
+        !SettingsStore.shared.dictationKeyStartsFluidVoice
+    }
     /// Max gap between the first tap's release and the second press for double-tap-to-start.
     private let doubleTapWindowSeconds: TimeInterval = 0.4
     /// Uptime of the idle tap that armed double-tap-to-start; nil when not armed.
@@ -1194,7 +1200,7 @@ final class GlobalHotkeyManager: NSObject {
     private func primaryModifierOnlyBehavior(for shortcut: HotkeyShortcut) -> ModifierOnlyShortcutBehavior {
         .init(
             shortcut: shortcut,
-            isEnabled: true,
+            isEnabled: self.primaryShortcutsActive,
             holdModeType: .transcription,
             holdStartMessage: "Transcription modifier held (hold mode) - starting",
             holdReleaseMessage: "Transcription modifier released (hold mode) - stopping",
@@ -1464,7 +1470,9 @@ final class GlobalHotkeyManager: NSObject {
             }
 
             // Then check transcription hotkeys
-            if let shortcut = self.primaryShortcuts.first(where: { $0.matches(keyCode: keyCode, modifiers: eventModifiers) }) {
+            if self.primaryShortcutsActive,
+               let shortcut = self.primaryShortcuts.first(where: { $0.matches(keyCode: keyCode, modifiers: eventModifiers) })
+            {
                 guard self.beginPrimaryShortcutPress(.keyboard(shortcut.keyCode)) else { return nil }
                 self.handlePrimaryDictationTriggerDown()
                 return nil
@@ -2309,7 +2317,9 @@ final class GlobalHotkeyManager: NSObject {
             return true
         }
 
-        if self.primaryShortcuts.contains(where: { $0.matchesMouse(button: mouseButton, modifiers: eventModifiers) }) {
+        if self.primaryShortcutsActive,
+           self.primaryShortcuts.contains(where: { $0.matchesMouse(button: mouseButton, modifiers: eventModifiers) })
+        {
             guard self.beginPrimaryShortcutPress(.mouse(mouseButton)) else { return false }
             self.handlePrimaryDictationTriggerDown()
             return true
