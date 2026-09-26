@@ -1957,6 +1957,20 @@ final class SettingsStore: ObservableObject {
         set { objectWillChange.send(); self.defaults.set(newValue.rawValue, forKey: Keys.numberFormattingMode) }
     }
 
+    /// Width of the menu bar notch when it shows transcription beside the waveform.
+    var menuBarNotchWidth: MenuBarNotchWidth {
+        get { self.defaults.string(forKey: Keys.menuBarNotchWidth).flatMap(MenuBarNotchWidth.init(rawValue:)) ?? .automatic }
+        set { objectWillChange.send(); self.defaults.set(newValue.rawValue, forKey: Keys.menuBarNotchWidth) }
+    }
+
+    /// Where the menu bar notch shows the live transcription.
+    var menuBarNotchTranscript: MenuBarNotchTranscript {
+        get {
+            self.defaults.string(forKey: Keys.menuBarNotchTranscript).flatMap(MenuBarNotchTranscript.init(rawValue:)) ?? .beside
+        }
+        set { objectWillChange.send(); self.defaults.set(newValue.rawValue, forKey: Keys.menuBarNotchTranscript) }
+    }
+
     var enableStreamingPreview: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.enableStreamingPreview)
@@ -5867,6 +5881,8 @@ private extension SettingsStore {
         static let showRecordingTimer = "ShowRecordingTimer"
         static let audioRetentionDays = "AudioRetentionDays"
         static let numberFormattingMode = "NumberFormattingMode"
+        static let menuBarNotchWidth = "MenuBarNotchWidth"
+        static let menuBarNotchTranscript = "MenuBarNotchTranscript"
         static let enableStreamingPreview = "EnableStreamingPreview"
         static let experimentalParakeetUnifiedFinalEnabled = "ExperimentalParakeetUnifiedFinalEnabled"
         static let returnDictationToStartingField = "ReturnDictationToStartingField"

@@ -1365,6 +1365,54 @@ struct SettingsView: View {
                             }
                             .settingsSearchTarget(.overlayStyle)
 
+                            if self.settings.usesMenuBarNotch {
+                                HStack(alignment: .center) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Notch Transcript")
+                                            .font(self.theme.typography.bodyStrong)
+                                            .foregroundStyle(self.settingsTitleText)
+                                        Text("Beside keeps everything inside the menu bar; Below stays narrow and adds two lines under it.")
+                                            .font(self.theme.typography.bodySmall)
+                                            .foregroundStyle(self.settingsSecondaryText)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    Picker("", selection: self.$settings.menuBarNotchTranscript) {
+                                        ForEach(MenuBarNotchTranscript.allCases) { mode in
+                                            Text(mode.displayName).tag(mode)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .fluidDropdownStyle()
+                                    .frame(width: 170, alignment: .trailing)
+                                }
+
+                                if self.settings.menuBarNotchTranscript == .beside {
+                                    HStack(alignment: .center) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Notch Width")
+                                                .font(self.theme.typography.bodyStrong)
+                                                .foregroundStyle(self.settingsTitleText)
+                                            Text("Automatic fills the free space between the app's menus and the status icons, and adapts when you switch apps.")
+                                                .font(self.theme.typography.bodySmall)
+                                                .foregroundStyle(self.settingsSecondaryText)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                                        Picker("", selection: self.$settings.menuBarNotchWidth) {
+                                            ForEach(MenuBarNotchWidth.allCases) { width in
+                                                Text(width.displayName).tag(width)
+                                            }
+                                        }
+                                        .pickerStyle(.menu)
+                                        .fluidDropdownStyle()
+                                        .frame(width: 170, alignment: .trailing)
+                                    }
+                                }
+                            }
+
                             Divider().padding(.vertical, 4)
 
                             HStack {
