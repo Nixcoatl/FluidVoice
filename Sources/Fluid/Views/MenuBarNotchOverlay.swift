@@ -4,17 +4,16 @@ import SwiftUI
 
 /// "Menu Bar Notch" style for the top overlay: an artificial notch fused to the top edge of
 /// the screen (black like the bezel, with concave shoulders where it meets the edge) that
-/// shows the app icon, waveform and elapsed time while dictating, and grows downward to show
-/// the live transcription. For Macs without a real notch, so
+/// shows the app icon, waveform and elapsed time while dictating, and widens sideways (never
+/// down, so it never covers the screen) to show the live transcription in one line. For Macs without a real notch, so
 /// the recording indicator lives in the menu bar instead of taking screen space.
 @MainActor
 final class MenuBarNotchController {
     static let shared = MenuBarNotchController()
 
     private static let compactWidth: CGFloat = 212
-    private static let expandedWidth: CGFloat = 440
-    /// Extra height for two lines of live transcription below the menu bar row.
-    private static let transcriptHeight: CGFloat = 38
+    /// About 5 inches on a 13" MacBook Air; capped so the notch never swallows the menu bar.
+    private static let expandedWidth: CGFloat = 600
     private var panel: NSPanel?
     private var hostingView: NSHostingView<MenuBarNotchView>?
     private var subscriptions = Set<AnyCancellable>()
@@ -97,8 +96,8 @@ final class MenuBarNotchController {
             self.panel = panel
             self.hostingView = hostingView
         }
-        let width = expanded ? Self.expandedWidth : Self.compactWidth
-        let height = menuBarHeight + (expanded ? Self.transcriptHeight : 0)
+        let width = expanded ? min(Self.expandedWidth, screen.frame.width * 0.45) : Self.compactWidth
+        let height = menuBarHeight
         let frame = NSRect(
             x: screen.frame.midX - width / 2,
             y: screen.frame.maxY - height,
@@ -155,27 +154,13 @@ private struct MenuBarNotchView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            self.statusRow
-                .frame(height: self.rowHeight)
-
-            if self.showsTranscript {
-                Text(self.contentState.transcriptionText.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.fluidSystem(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(2)
-                    .truncationMode(.head)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(.bottom, 6)
-                    .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, MenuBarNotchShape.shoulder + 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(MenuBarNotchShape(bottomRadius: self.showsTranscript ? 14 : 9).fill(Color.black))
-        .animation(.easeOut(duration: 0.15), value: self.showsTranscript)
-        .preferredColorScheme(.dark)
+        self.statusRow
+            .padding(.horizontal, MenuBarNotchShape.shoulder + 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(height: self.rowHeight)
+            .background(MenuBarNotchShape().fill(Color.black))
+            .animation(.easeOut(duration: 0.15), value: self.showsTranscript)
+            .preferredColorScheme(.dark)
     }
 
     private var statusRow: some View {
@@ -201,6 +186,19 @@ private struct MenuBarNotchView: View {
                     color: self.contentState.mode.notchColor
                 )
                 .frame(width: 40, height: 14)
+
+                if self.showsTranscript {
+                    // One line, newest words visible: older text scrolls off the left edge.
+                    Text(self.contentState.transcriptionText
+                        .replacingOccurrences(of: "\n", with: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(.fluidSystem(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                }
 
                 if let startedAt = self.contentState.recordingStartedAt {
                     RecordingElapsedTimeText(startedAt: startedAt, fontSize: 10)
