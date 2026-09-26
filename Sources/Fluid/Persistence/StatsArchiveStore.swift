@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// Numbers-only summary of a deleted history entry, so stats survive clearing history.

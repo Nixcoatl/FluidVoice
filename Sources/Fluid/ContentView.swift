@@ -4931,7 +4931,6 @@ struct ContentView: View {
         }
     }
 
-    @discardableResult
     /// Esc on a dictation at least this long still transcribes it into History (never pasted).
     private static let cancelledDictationKeepThresholdSeconds: TimeInterval = 30
 
@@ -4968,6 +4967,7 @@ struct ContentView: View {
         }
     }
 
+    @discardableResult
     private func handleCancelShortcut() -> Bool {
         var handled = false
 
