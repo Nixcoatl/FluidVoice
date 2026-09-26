@@ -455,9 +455,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             "Manual update check requested. Current version: \(currentVersion)",
             source: "AppDelegate"
         )
-        DebugLogger.shared.info("Checking repository: altic-dev/Fluid-oss", source: "AppDelegate")
+        DebugLogger.shared.info("Checking repository: \(SimpleUpdater.releaseOwner)/\(SimpleUpdater.releaseRepo)", source: "AppDelegate")
         DebugLogger.shared.debug("🔍 DEBUG: Manual update check started - Current version: \(currentVersion)", source: "AppDelegate")
-        DebugLogger.shared.debug("🔍 DEBUG: Repository: altic-dev/Fluid-oss", source: "AppDelegate")
+        DebugLogger.shared.debug("🔍 DEBUG: Repository: \(SimpleUpdater.releaseOwner)/\(SimpleUpdater.releaseRepo)", source: "AppDelegate")
         let includePrerelease = SettingsStore.shared.betaReleasesEnabled
         DebugLogger.shared.info(
             "Beta releases opt-in: \(SettingsStore.shared.betaReleasesEnabled)",
@@ -512,7 +512,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             // Wait 3 seconds after launch before checking
             try? await Task.sleep(nanoseconds: 3_000_000_000)
 
-            DebugLogger.shared.info("Performing automatic update check for altic-dev/Fluid-oss", source: "AppDelegate")
+            DebugLogger.shared.info("Performing automatic update check for \(SimpleUpdater.releaseOwner)/\(SimpleUpdater.releaseRepo)", source: "AppDelegate")
 
             do {
                 let includePrerelease = SettingsStore.shared.betaReleasesEnabled
