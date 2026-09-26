@@ -97,9 +97,21 @@ final class MenuBarNotchController {
             .store(in: &self.subscriptions)
 
         // Automatic width follows the active app: its menus decide how much room is free.
+        // Measure again a moment later, since some apps publish their menus late.
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.didActivateApplicationNotification)
             .delay(for: .milliseconds(150), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.relayoutIfVisible()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.relayoutIfVisible()
+                }
+            }
+            .store(in: &self.subscriptions)
+
+        // Apply Settings changes (width, transcript mode, style) immediately.
+        SettingsStore.shared.objectWillChange
+            .debounce(for: .milliseconds(60), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in self?.relayoutIfVisible() }
             .store(in: &self.subscriptions)
     }
@@ -115,6 +127,10 @@ final class MenuBarNotchController {
 
     private func relayoutIfVisible() {
         guard self.panel?.isVisible == true, self.hideWorkItem == nil else { return }
+        guard SettingsStore.shared.usesMenuBarNotch else {
+            self.hide()
+            return
+        }
         self.show()
     }
 
@@ -297,6 +313,10 @@ enum MenuBarFreeSpace {
 
     private static func appMenusMaxX(on screen: NSScreen) -> CGFloat? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        // Accessibility can't query this process from itself; measure FluidVoice's own menus.
+        if app.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            return screen.frame.minX + self.ownMenusWidth()
+        }
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, 0.3)
         guard let menuBar = self.element(appElement, attribute: kAXMenuBarAttribute),
@@ -311,6 +331,21 @@ enum MenuBarFreeSpace {
             maxX = max(maxX ?? frame.maxX, frame.maxX)
         }
         return maxX
+    }
+
+    /// Apple menu plus each of this app's menu titles (the app name is drawn bold), with the
+    /// menu bar's own padding around every title.
+    private static func ownMenusWidth() -> CGFloat {
+        let font = NSFont.menuBarFont(ofSize: 0)
+        let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "FluidVoice"
+        var width: CGFloat = 44 // Apple menu
+        for (index, item) in (NSApp.mainMenu?.items ?? []).enumerated() where !item.isHidden {
+            let title = index == 0 ? appName : item.title
+            let titleFont = index == 0 ? boldFont : font
+            width += (title as NSString).size(withAttributes: [.font: titleFont]).width + 22
+        }
+        return width
     }
 
     private nonisolated static func element(_ parent: AXUIElement, attribute: String) -> AXUIElement? {
