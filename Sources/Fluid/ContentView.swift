@@ -506,8 +506,15 @@ struct ContentView: View {
                 self.refreshInputDevices()
             }
             .onDisappear {
-                Task { await self.asr.stopWithoutTranscription() }
-                self.cancelPrewarmDictationIfNeeded()
+                // Closing the window must not throw away a dictation in progress: it keeps
+                // recording (the overlay stays visible) and the hotkey still stops and
+                // transcribes it.
+                if self.asr.isRunningOrStarting {
+                    DebugLogger.shared.info("Main window closed during recording - keeping dictation alive", source: "ContentView")
+                } else {
+                    Task { await self.asr.stopWithoutTranscription() }
+                    self.cancelPrewarmDictationIfNeeded()
+                }
                 // Note: Overlay lifecycle is now managed by MenuBarManager
                 // Note: NotchContentState handlers capture self (a struct value copy) and are
                 // intentionally kept alive so the overlay remains fully functional when the
@@ -4830,7 +4837,10 @@ struct ContentView: View {
                 }
             },
             isDictateRecordingProvider: {
+                // A reopened window starts with no active mode even though ASR is still
+                // recording; treat that recording as dictation so the hotkey can stop it.
                 self.activeRecordingMode == .dictate
+                    || (self.activeRecordingMode == .none && self.asr.isRunning)
             },
             isPromptModeRecordingProvider: {
                 self.activeRecordingMode == .promptMode
