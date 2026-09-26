@@ -4,13 +4,17 @@ import SwiftUI
 
 /// "Menu Bar Notch" style for the top overlay: an artificial notch fused to the top edge of
 /// the screen (black like the bezel, with concave shoulders where it meets the edge) that
-/// shows the waveform and elapsed time while dictating. For Macs without a real notch, so
+/// shows the app icon, waveform and elapsed time while dictating, and grows downward to show
+/// the live transcription. For Macs without a real notch, so
 /// the recording indicator lives in the menu bar instead of taking screen space.
 @MainActor
 final class MenuBarNotchController {
     static let shared = MenuBarNotchController()
 
-    private static let width: CGFloat = 212
+    private static let compactWidth: CGFloat = 212
+    private static let expandedWidth: CGFloat = 440
+    /// Extra height for two lines of live transcription below the menu bar row.
+    private static let transcriptHeight: CGFloat = 38
     private var panel: NSPanel?
     private var hostingView: NSHostingView<MenuBarNotchView>?
     private var subscriptions = Set<AnyCancellable>()
@@ -27,6 +31,21 @@ final class MenuBarNotchController {
                 self?.update(isActive: isActive)
             }
             .store(in: &self.subscriptions)
+
+        // Grow or shrink when live transcription text appears or goes away.
+        Publishers.CombineLatest(state.$transcriptionText, state.$isProcessing)
+            .map { text, isProcessing in Self.showsTranscript(text: text, isProcessing: isProcessing) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.panel?.isVisible == true, self.hideWorkItem == nil else { return }
+                self.show()
+            }
+            .store(in: &self.subscriptions)
+    }
+
+    nonisolated static func showsTranscript(text: String, isProcessing: Bool) -> Bool {
+        !isProcessing && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Called at startup and whenever recording starts, so the waveform follows the live mic level.
@@ -54,7 +73,9 @@ final class MenuBarNotchController {
     private func show() {
         guard let screen = OverlayScreenResolver.screenForCurrentPointer() ?? NSScreen.main else { return }
         let menuBarHeight = max(screen.frame.maxY - screen.visibleFrame.maxY, 24)
-        let rootView = MenuBarNotchView(audioPublisher: self.audioPublisher, height: menuBarHeight)
+        let state = NotchContentState.shared
+        let expanded = Self.showsTranscript(text: state.transcriptionText, isProcessing: state.isProcessing)
+        let rootView = MenuBarNotchView(audioPublisher: self.audioPublisher, rowHeight: menuBarHeight)
         if let hostingView = self.hostingView {
             hostingView.rootView = rootView
         } else {
@@ -76,14 +97,16 @@ final class MenuBarNotchController {
             self.panel = panel
             self.hostingView = hostingView
         }
+        let width = expanded ? Self.expandedWidth : Self.compactWidth
+        let height = menuBarHeight + (expanded ? Self.transcriptHeight : 0)
         let frame = NSRect(
-            x: screen.frame.midX - Self.width / 2,
-            y: screen.frame.maxY - menuBarHeight,
-            width: Self.width,
-            height: menuBarHeight
+            x: screen.frame.midX - width / 2,
+            y: screen.frame.maxY - height,
+            width: width,
+            height: height
         )
         guard let panel = self.panel else { return }
-        panel.setFrame(frame, display: true)
+        panel.setFrame(frame, display: true, animate: panel.isVisible && panel.frame != frame)
         panel.alphaValue = panel.isVisible ? 1 : panel.alphaValue
         if !panel.isVisible {
             panel.alphaValue = 0
@@ -96,6 +119,7 @@ final class MenuBarNotchController {
     }
 
     private func hide() {
+        self.hideWorkItem = nil
         guard let panel = self.panel, panel.isVisible else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
@@ -112,14 +136,51 @@ final class MenuBarNotchController {
 
 private struct MenuBarNotchView: View {
     let audioPublisher: AnyPublisher<CGFloat, Never>
-    let height: CGFloat
+    let rowHeight: CGFloat
 
     @ObservedObject private var contentState = NotchContentState.shared
     @ObservedObject private var activeAppMonitor = ActiveAppMonitor.shared
 
+    private var showsTranscript: Bool {
+        MenuBarNotchController.showsTranscript(
+            text: self.contentState.transcriptionText,
+            isProcessing: self.contentState.isProcessing
+        )
+    }
+
+    private var appIcon: NSImage? {
+        self.contentState.targetAppIcon
+            ?? self.activeAppMonitor.activeAppIcon
+            ?? NSWorkspace.shared.frontmostApplication?.icon
+    }
+
     var body: some View {
+        VStack(spacing: 0) {
+            self.statusRow
+                .frame(height: self.rowHeight)
+
+            if self.showsTranscript {
+                Text(self.contentState.transcriptionText.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.fluidSystem(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(2)
+                    .truncationMode(.head)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, MenuBarNotchShape.shoulder + 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(MenuBarNotchShape(bottomRadius: self.showsTranscript ? 14 : 9).fill(Color.black))
+        .animation(.easeOut(duration: 0.15), value: self.showsTranscript)
+        .preferredColorScheme(.dark)
+    }
+
+    private var statusRow: some View {
         HStack(spacing: 8) {
-            if let icon = self.contentState.targetAppIcon ?? self.activeAppMonitor.activeAppIcon {
+            if let icon = self.appIcon {
                 Image(nsImage: icon)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -146,11 +207,6 @@ private struct MenuBarNotchView: View {
                 }
             }
         }
-        .padding(.horizontal, MenuBarNotchShape.shoulder + 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MenuBarNotchShape().fill(Color.black))
-        .frame(height: self.height)
-        .preferredColorScheme(.dark)
     }
 }
 

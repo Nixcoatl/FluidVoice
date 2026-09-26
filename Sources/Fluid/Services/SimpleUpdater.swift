@@ -899,6 +899,15 @@ final class SimpleUpdater {
             finalAppURL = installedAppURL
         }
 
+        // Same location as the running app: quit first (saving history), then relaunch from
+        // a helper once this process is gone. Launching the new copy while the old one is still
+        // running left two instances (two menu bar icons) and the old one stuck on quit.
+        if finalAppURL.standardizedFileURL.path == Bundle.main.bundleURL.standardizedFileURL.path {
+            DebugLogger.shared.info("SimpleUpdater: Installed in place, restarting via quit-then-relaunch", source: "SimpleUpdater")
+            AppDelegate.restartAfterSaving()
+            return
+        }
+
         // Use modern NSWorkspace API for more reliable app launching
         DispatchQueue.main.async {
             DebugLogger.shared.info("SimpleUpdater: Attempting to relaunch app at: \(finalAppURL.path)", source: "SimpleUpdater")

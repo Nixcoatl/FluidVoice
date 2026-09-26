@@ -176,17 +176,19 @@ final class NotchOverlayManager {
     private func showInternal(audioLevelPublisher: AnyPublisher<CGFloat, Never>, mode: OverlayMode) {
         Self.overlayBench("show_internal_enter mode=\(mode.rawValue) state=\(self.state)")
         guard self.state == .idle else { return }
-        // The artificial menu bar notch stands in for the regular top overlay.
-        if SettingsStore.shared.usesMenuBarNotch {
-            self.lastAudioPublisher = audioLevelPublisher
-            return
-        }
-
         // Store for potential re-show during processing
         self.lastAudioPublisher = audioLevelPublisher
 
         // Start monitoring active app changes (updates icon in real-time)
         ActiveAppMonitor.shared.startMonitoring()
+
+        // The artificial menu bar notch stands in for the regular top overlay.
+        if SettingsStore.shared.usesMenuBarNotch {
+            self.currentMode = self.normalizedOverlayMode(mode)
+            NotchContentState.shared.mode = self.currentMode
+            NotchContentState.shared.updateTranscription("")
+            return
+        }
         let targetScreen = OverlayScreenResolver.screenForCurrentPointer()
 
         // Route to bottom overlay if user preference is set
