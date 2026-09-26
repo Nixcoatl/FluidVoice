@@ -1322,20 +1322,6 @@ struct SettingsView: View {
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
                         VStack(alignment: .leading, spacing: 12) {
-                            self.optionToggleRow(
-                                title: "Menu Bar Notch (Experimental)",
-                                description: "Show a small notch-style tab in the middle of the menu bar with the waveform and timer while you dictate.",
-                                isOn: self.$settings.menuBarNotchEnabled
-                            )
-                            if self.settings.menuBarNotchEnabled {
-                                self.optionToggleRow(
-                                    title: "Hide Regular Overlay",
-                                    description: "Use only the menu bar notch. You won't see the live transcription while speaking.",
-                                    isOn: self.$settings.menuBarNotchReplacesOverlay
-                                )
-                            }
-                            Divider().opacity(0.2)
-
                             if self.settings.overlayPosition == .bottom {
                                 self.overlayMaterialSettings
                                 Divider().padding(.vertical, 8)

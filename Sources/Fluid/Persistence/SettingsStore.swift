@@ -1957,18 +1957,6 @@ final class SettingsStore: ObservableObject {
         set { objectWillChange.send(); self.defaults.set(newValue.rawValue, forKey: Keys.numberFormattingMode) }
     }
 
-    /// Experimental: show a small "notch" tab in the menu bar while dictating.
-    var menuBarNotchEnabled: Bool {
-        get { self.defaults.bool(forKey: Keys.menuBarNotchEnabled) }
-        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.menuBarNotchEnabled) }
-    }
-
-    /// With the menu bar notch on, skip the regular recording overlay.
-    var menuBarNotchReplacesOverlay: Bool {
-        get { self.defaults.bool(forKey: Keys.menuBarNotchReplacesOverlay) }
-        set { objectWillChange.send(); self.defaults.set(newValue, forKey: Keys.menuBarNotchReplacesOverlay) }
-    }
-
     var enableStreamingPreview: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.enableStreamingPreview)
@@ -2413,6 +2401,8 @@ final class SettingsStore: ObservableObject {
     enum NotchPresentationMode: String, CaseIterable, Codable {
         case standard
         case minimal
+        /// Artificial notch drawn over the menu bar, for Macs without a notch.
+        case menuBar
 
         var displayName: String {
             switch self {
@@ -2420,8 +2410,15 @@ final class SettingsStore: ObservableObject {
                 return "Standard Notch"
             case .minimal:
                 return "Compact"
+            case .menuBar:
+                return "Menu Bar Notch"
             }
         }
+    }
+
+    /// Top position with the artificial menu bar notch replacing the regular overlay.
+    var usesMenuBarNotch: Bool {
+        self.overlayPosition == .top && self.notchPresentationMode == .menuBar
     }
 
     /// Where the recording overlay appears (default: bottom)
@@ -5870,8 +5867,6 @@ private extension SettingsStore {
         static let showRecordingTimer = "ShowRecordingTimer"
         static let audioRetentionDays = "AudioRetentionDays"
         static let numberFormattingMode = "NumberFormattingMode"
-        static let menuBarNotchEnabled = "MenuBarNotchEnabled"
-        static let menuBarNotchReplacesOverlay = "MenuBarNotchReplacesOverlay"
         static let enableStreamingPreview = "EnableStreamingPreview"
         static let experimentalParakeetUnifiedFinalEnabled = "ExperimentalParakeetUnifiedFinalEnabled"
         static let returnDictationToStartingField = "ReturnDictationToStartingField"

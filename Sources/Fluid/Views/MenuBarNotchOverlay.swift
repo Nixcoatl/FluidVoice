@@ -2,14 +2,15 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// Experimental "artificial notch": a small black tab centered in the menu bar that shows
-/// the waveform and elapsed time while dictating. Meant for Macs without a notch, so the
-/// recording indicator lives in the menu bar instead of taking screen space.
+/// "Menu Bar Notch" style for the top overlay: an artificial notch fused to the top edge of
+/// the screen (black like the bezel, with concave shoulders where it meets the edge) that
+/// shows the waveform and elapsed time while dictating. For Macs without a real notch, so
+/// the recording indicator lives in the menu bar instead of taking screen space.
 @MainActor
 final class MenuBarNotchController {
     static let shared = MenuBarNotchController()
 
-    private static let width: CGFloat = 196
+    private static let width: CGFloat = 212
     private var panel: NSPanel?
     private var hostingView: NSHostingView<MenuBarNotchView>?
     private var subscriptions = Set<AnyCancellable>()
@@ -34,7 +35,7 @@ final class MenuBarNotchController {
     }
 
     private func update(isActive: Bool) {
-        guard SettingsStore.shared.menuBarNotchEnabled else {
+        guard SettingsStore.shared.usesMenuBarNotch else {
             self.hide()
             return
         }
@@ -63,7 +64,7 @@ final class MenuBarNotchController {
                 backing: .buffered,
                 defer: false
             )
-            panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1)
+            panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             panel.isOpaque = false
             panel.backgroundColor = .clear
@@ -81,12 +82,31 @@ final class MenuBarNotchController {
             width: Self.width,
             height: menuBarHeight
         )
-        self.panel?.setFrame(frame, display: true)
-        self.panel?.orderFrontRegardless()
+        guard let panel = self.panel else { return }
+        panel.setFrame(frame, display: true)
+        panel.alphaValue = panel.isVisible ? 1 : panel.alphaValue
+        if !panel.isVisible {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                panel.animator().alphaValue = 1
+            }
+        }
     }
 
     private func hide() {
-        self.panel?.orderOut(nil)
+        guard let panel = self.panel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            panel.animator().alphaValue = 0
+        } completionHandler: {
+            MainActor.assumeIsolated {
+                // A new recording may have started during the fade.
+                guard panel.alphaValue == 0 else { return }
+                panel.orderOut(nil)
+            }
+        }
     }
 }
 
@@ -126,13 +146,47 @@ private struct MenuBarNotchView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, MenuBarNotchShape.shoulder + 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10, style: .continuous)
-                .fill(Color.black)
-        )
+        .background(MenuBarNotchShape().fill(Color.black))
         .frame(height: self.height)
         .preferredColorScheme(.dark)
+    }
+}
+
+/// Notch silhouette: flush with the top edge, concave shoulders flaring into the bezel,
+/// and rounded bottom corners, like the MacBook camera housing.
+private struct MenuBarNotchShape: Shape {
+    static let shoulder: CGFloat = 7
+    var bottomRadius: CGFloat = 9
+
+    func path(in rect: CGRect) -> Path {
+        let shoulder = Self.shoulder
+        let radius = min(self.bottomRadius, (rect.height - shoulder) / 1.2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        // Left shoulder: curves inward from the top edge into the notch wall.
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + shoulder, y: rect.minY + shoulder),
+            control: CGPoint(x: rect.minX + shoulder, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + shoulder, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + shoulder + radius, y: rect.maxY),
+            control: CGPoint(x: rect.minX + shoulder, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - shoulder - radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - shoulder, y: rect.maxY - radius),
+            control: CGPoint(x: rect.maxX - shoulder, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - shoulder, y: rect.minY + shoulder))
+        // Right shoulder.
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.maxX - shoulder, y: rect.minY)
+        )
+        path.closeSubpath()
+        return path
     }
 }

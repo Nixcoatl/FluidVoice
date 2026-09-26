@@ -176,8 +176,8 @@ final class NotchOverlayManager {
     private func showInternal(audioLevelPublisher: AnyPublisher<CGFloat, Never>, mode: OverlayMode) {
         Self.overlayBench("show_internal_enter mode=\(mode.rawValue) state=\(self.state)")
         guard self.state == .idle else { return }
-        // The menu bar notch can stand in for the regular overlay entirely.
-        if SettingsStore.shared.menuBarNotchEnabled, SettingsStore.shared.menuBarNotchReplacesOverlay {
+        // The artificial menu bar notch stands in for the regular top overlay.
+        if SettingsStore.shared.usesMenuBarNotch {
             self.lastAudioPublisher = audioLevelPublisher
             return
         }
@@ -843,6 +843,8 @@ private extension NotchOverlayManager.NotchPresentationPolicy {
             return .standard
         case .minimal:
             return supportsCompactPresentation ? .minimal : .standard
+        case .menuBar:
+            return .standard
         }
     }
 }
