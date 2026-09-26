@@ -54,8 +54,16 @@ jobs:
           ln -s Versions/Current/Resources "$FW/Resources"
           codesign --force --sign - --options runtime --timestamp=none "$FW"
         fi
+        # Re-sign with the entitlements Xcode generated (Fluid.entitlements plus the
+        # ENABLE_RESOURCE_ACCESS_* ones such as audio-input), not the raw source file.
+        ENT="$RUNNER_TEMP/entitlements.plist"
+        codesign -d --entitlements - --xml "$APP" > "$ENT"
+        plutil -p "$ENT" | grep -q 'com.apple.security.device.audio-input' \
+          || { echo "audio-input entitlement missing"; exit 1; }
         codesign --force --sign - --options runtime --timestamp=none \
-          --entitlements Fluid.entitlements "$APP"
+          --entitlements "$ENT" "$APP"
+        codesign -d --entitlements - --xml "$APP" | plutil -p - | grep -q 'com.apple.security.device.audio-input' \
+          || { echo "audio-input entitlement lost after re-sign"; exit 1; }
         codesign --verify --deep --strict --verbose=2 "$APP"
 
     - name: Zip app
