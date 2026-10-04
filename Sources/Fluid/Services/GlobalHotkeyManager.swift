@@ -1839,7 +1839,7 @@ final class GlobalHotkeyManager: NSObject {
         }
     }
 
-    private func handlePrimaryDictationTriggerUp(shortcut: HotkeyShortcut) {
+    private func handlePrimaryDictationTriggerUp(shortcut: HotkeyShortcut? = nil) {
         switch self.hotkeyMode {
         case .hold:
             self.isKeyPressed = false
