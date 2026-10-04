@@ -16,6 +16,15 @@ Open source voice-to-text dictation app for macOS with on-device AI enhancement.
 
 **Manual download:** [latest release](https://github.com/altic-dev/FluidVoice/releases/latest)
 
+> [!WARNING]
+> **fluidvoice.org is not affiliated with, operated by, or endorsed by FluidVoice or Altic.** Its claims to be our official website are unauthorized.
+>
+> Our official website is [altic.dev/fluid](https://altic.dev/fluid). Our official domains also include **fluidvoice.com** and **fluidvoice.app**.
+>
+> For official downloads, use this repository's [GitHub Releases](https://github.com/altic-dev/FluidVoice/releases).
+>
+> If **fluidvoice.org** appears in your search results claiming to be our official website, please report the misleading result to the search provider.
+
 > [!NOTE]
 > FluidVoice is on macOS today. **iOS and Windows are on the way** — join the waitlist to get notified when we launch: **[altic.dev/fluid/waitlist](https://www.altic.dev/fluid/waitlist)**
 
@@ -219,7 +228,12 @@ Screen Recording, and microphone permissions to be removed and granted again aft
 
 ## Contributing
 
-Contributions are welcome! Please create an issue first to discuss major changes before submitting a pull request.
+Contributions are welcome! Read the [contribution guidelines](CONTRIBUTING.md) before starting work.
+
+- **Every PR needs a linked issue**, including bug fixes and small changes.
+- **Major features and UI or UX changes need maintainer or moderator approval before implementation.** Open an issue and wait for explicit agreement on the scope.
+- **Major feature requests start in [Discussions](https://github.com/altic-dev/FluidVoice/discussions/new?category=ideas).** After approval, create or link a tracking issue and reference both in the PR.
+- **Keep PRs focused and verifiable.** Include a screenshot, image, or video, clear reproduction or verification steps, and testing results. Show before and after for UI or UX changes.
 
 ### Development Setup
 
@@ -235,12 +249,15 @@ Contributions are welcome! Please create an issue first to discuss major changes
 ### Pull Request Guidelines
 
 - **One feature or fix per PR** — keep changes focused and atomic
-- **Create an issue first** so work is trackable before review
-- **Discuss non-trivial changes** before opening a PR
-- **Follow the PR template**
-- **Test thoroughly** on your machine
+- **Link a tracking issue** — a Discussion alone does not replace it
+- **Get approval before implementing major features or UI or UX changes**
+- **Follow the PR template**, including reproduction steps and screenshot, image, or video evidence
+- **Report testing results** and any checks you could not run
+- **AI-assisted coding is welcome; human review is required.** A human must create or vet the final PR, understand the full diff, and verify the behavior. Briefly explain AI use and your own checks; keep descriptions, code comments, and review replies focused. See [AI-assisted contribution guidelines](CONTRIBUTING.md#ai-assisted-contributions).
 - **Never commit personal team IDs or API keys**
 - **Check `git diff`** before committing
+
+**These requirements are mandatory. PRs that do not follow the [contribution guidelines](CONTRIBUTING.md) will not be reviewed or merged until they comply, and may be closed.**
 
 ---
 

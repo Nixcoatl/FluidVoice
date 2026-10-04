@@ -405,7 +405,7 @@ final class MeetingRecoveryTests: XCTestCase {
         }
         let started = await recorder.events.contains("store.save.start")
         XCTAssertTrue(started, "The first snapshot must be in flight before the burst")
-        for index in 1..<1_000 {
+        for index in 1..<1000 {
             session.events.append(MeetingSessionEvent(id: UUID(), occurredAt: Date(), kind: .writerFailure, trackID: nil, detail: "Failure \(index)"))
             queue.enqueue(session)
         }
@@ -416,7 +416,7 @@ final class MeetingRecoveryTests: XCTestCase {
         await secondFlush.value
 
         let savedCounts = await store.savedEventCounts
-        XCTAssertEqual(savedCounts, [1, 1_000], "Slow storage must not save or retain every intermediate snapshot")
+        XCTAssertEqual(savedCounts, [1, 1000], "Slow storage must not save or retain every intermediate snapshot")
         let persisted = try await store.load(id: session.id)
         XCTAssertEqual(persisted?.events.map(\.id), session.events.map(\.id))
         XCTAssertEqual(persisted?.events.last?.detail, session.events.last?.detail)
@@ -2690,6 +2690,140 @@ final class MeetingRecoveryTests: XCTestCase {
 
     // MARK: - Transcript corrections: persistence, undo, gating
 
+    func testTranscriptTextEditPersistsExportsAndUndoesWithoutChangingRecording() async throws {
+        let dir = self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MeetingSessionStore(rootDirectory: dir)
+        var (session, _, _, segmentID) = self.makeCorrectionSession(state: .completed)
+        var other = session.transcriptSegments[0]
+        other.id = UUID()
+        session.transcriptSegments.append(other)
+        try await store.create(session)
+        let baseline = try await store.load(id: session.id)
+        session = try XCTUnwrap(baseline)
+        let coordinator = MeetingSessionCoordinator(
+            store: store, capture: StubCaptureController(), processing: StubProcessingController(), audioArbiter: StubArbiter()
+        )
+        let original = session.transcriptSegments[0]
+        let edited = try await coordinator.editTranscriptText(
+            sessionID: session.id, segmentID: segmentID, text: "  Corrected words  ", expectedRevision: original.revision
+        )
+        var expected = session
+        expected.transcriptSegments[0].text = "Corrected words"
+        expected.transcriptSegments[0].originalText = original.text
+        expected.transcriptSegments[0].revision += 1
+        expected.updatedAt = edited.updatedAt
+        XCTAssertEqual(edited, expected, "Only this paragraph's text, correction metadata and update time change")
+        let loaded = try await store.load(id: session.id)
+        let reloaded = try XCTUnwrap(loaded)
+        XCTAssertEqual(reloaded.updatedAt.timeIntervalSince1970, floor(edited.updatedAt.timeIntervalSince1970), accuracy: 0.001)
+        expected.updatedAt = reloaded.updatedAt // Existing ISO-8601 persistence has second precision.
+        XCTAssertEqual(reloaded, expected)
+        XCTAssertTrue(MeetingTranscriptExporter.text(for: reloaded).contains("Corrected words"))
+        let exportedJSON = try XCTUnwrap(String(data: MeetingTranscriptExporter.json(for: reloaded), encoding: .utf8))
+        XCTAssertTrue(exportedJSON.contains("Corrected words"))
+        XCTAssertNil(coordinator.activeSession, "Editing history must not start or adopt a recording")
+
+        let editedAgain = try await coordinator.editTranscriptText(
+            sessionID: session.id, segmentID: segmentID, text: "Second correction", expectedRevision: original.revision + 1
+        )
+        XCTAssertEqual(editedAgain.transcriptSegments[0].originalText, original.text)
+        let undoSecond = try await coordinator.undoTranscriptCorrection(sessionID: session.id)
+        XCTAssertEqual(undoSecond.transcriptSegments, edited.transcriptSegments)
+        let undone = try await coordinator.undoTranscriptCorrection(sessionID: session.id)
+        XCTAssertEqual(undone.transcriptSegments, session.transcriptSegments)
+        XCTAssertEqual(undone.audioTracks, session.audioTracks)
+        XCTAssertFalse(coordinator.canUndoCorrection(sessionID: session.id))
+    }
+
+    func testTranscriptTextEditRejectsBlankStaleAndIgnoresNoOp() async throws {
+        let dir = self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MeetingSessionStore(rootDirectory: dir)
+        var (session, _, _, segmentID) = self.makeCorrectionSession(state: .completed)
+        try await store.create(session)
+        let baseline = try await store.load(id: session.id)
+        session = try XCTUnwrap(baseline)
+        let coordinator = MeetingSessionCoordinator(
+            store: store, capture: StubCaptureController(), processing: StubProcessingController(), audioArbiter: StubArbiter()
+        )
+        let original = session.transcriptSegments[0]
+        for (text, revision, expectedError) in [
+            (" \n ", original.revision, MeetingDomainError.emptyTranscriptText),
+            ("New text", original.revision - 1, MeetingDomainError.staleTranscriptEdit),
+        ] {
+            do {
+                _ = try await coordinator.editTranscriptText(sessionID: session.id, segmentID: segmentID, text: text, expectedRevision: revision)
+                XCTFail("Invalid correction must fail")
+            } catch let error as MeetingDomainError {
+                XCTAssertEqual(error, expectedError)
+            }
+        }
+        _ = try await coordinator.editTranscriptText(
+            sessionID: session.id, segmentID: segmentID, text: "  \(original.text)  ", expectedRevision: original.revision
+        )
+        let reloaded = try await store.load(id: session.id)
+        XCTAssertEqual(reloaded, session)
+        XCTAssertFalse(coordinator.canUndoCorrection(sessionID: session.id))
+    }
+
+    func testTranscriptTextFailedSaveKeepsOriginalAndAllowsRetry() async throws {
+        let dir = self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MeetingSessionStore(rootDirectory: dir)
+        var (session, _, _, segmentID) = self.makeCorrectionSession(state: .completed)
+        try await store.create(session)
+        let baseline = try await store.load(id: session.id)
+        session = try XCTUnwrap(baseline)
+        let gated = GatedThrowingSaveStore(inner: store, recorder: EventRecorder())
+        await gated.throwOnNextSave()
+        let coordinator = MeetingSessionCoordinator(
+            store: gated, capture: StubCaptureController(), processing: StubProcessingController(), audioArbiter: StubArbiter()
+        )
+        do {
+            _ = try await coordinator.editTranscriptText(sessionID: session.id, segmentID: segmentID, text: "Corrected", expectedRevision: 1)
+            XCTFail("Save failure must propagate")
+        } catch {}
+        let reloaded = try await store.load(id: session.id)
+        XCTAssertEqual(reloaded, session)
+        XCTAssertFalse(coordinator.canUndoCorrection(sessionID: session.id))
+        let retried = try await coordinator.editTranscriptText(sessionID: session.id, segmentID: segmentID, text: "Corrected", expectedRevision: 1)
+        XCTAssertEqual(retried.transcriptSegments[0].text, "Corrected")
+        XCTAssertTrue(coordinator.canUndoCorrection(sessionID: session.id))
+    }
+
+    func testTranscriptEditorRendersWithoutInvokingSaveOrCancel() throws {
+        guard let path = ProcessInfo.processInfo.environment["FLUIDVOICE_MEETING_EDIT_SNAPSHOT"] else {
+            throw XCTSkip("Opt-in transcript editor visual check")
+        }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        var actions = 0
+        for scheme in [ColorScheme.light, .dark] {
+            let view = MeetingTranscriptTextEditor(
+                text: "Today we reviewed the project timeline. Our next meeting is on Friday.",
+                onSave: { _ in actions += 1; return nil },
+                onCancel: { actions += 1 }
+            )
+            .appTheme(.adaptive(accent: FluidBrandColors.blue, colorScheme: scheme))
+            .environment(\.colorScheme, scheme)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 440), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+            host.appearance = window.appearance
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            defer { window.orderOut(nil) }
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: output.appendingPathComponent("editor-\(scheme).png"))
+        }
+        XCTAssertEqual(actions, 0)
+    }
+
     func testEachCorrectionOpOnHistorySessionPersists() async throws {
         let dir = self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -2903,6 +3037,12 @@ final class MeetingRecoveryTests: XCTestCase {
             }
         }
 
+        do {
+            _ = try await coordinator.editTranscriptText(sessionID: session.id, segmentID: session.transcriptSegments[0].id, text: "Correction", expectedRevision: 1)
+            XCTFail("Text edit must fail while processing")
+        } catch let error as MeetingCoordinatorError {
+            guard case .activityInProgress = error else { return XCTFail("Expected activityInProgress, got \(error)") }
+        }
         processing.openGate()
         _ = try await retryTask.value
     }
@@ -4425,6 +4565,42 @@ final class MeetingRecoveryTests: XCTestCase {
         XCTAssertEqual(MeetingTranscriptionSetupDraft.defaultTitle(mode: .onlineCall, applicationDisplayName: nil), "Meeting")
     }
 
+    func testAutomaticMeetingTitleUsesRecordingStartAndPreservesCustomNames() throws {
+        let timebase = MeetingTimebaseMetadata(startedHostTime: 1, machTimebaseNumerator: 1, machTimebaseDenominator: 1, firstPresentationTime: nil)
+        let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let configuration = MeetingCaptureConfiguration(
+            mode: .inRoom,
+            title: "Meeting",
+            microphone: .init(captureDeviceID: "fixture", displayName: "Fixture"),
+            timestampDefaultTitle: true
+        )
+        let first = MeetingSession(configuration: configuration, startedAt: startedAt, timebase: timebase)
+        let later = MeetingSession(configuration: configuration, startedAt: startedAt.addingTimeInterval(3600), timebase: timebase)
+        XCTAssertTrue(first.title.hasPrefix("Meeting · "))
+        XCTAssertNotEqual(first.title, later.title)
+        XCTAssertEqual(first.defaultTitleBase, "Meeting")
+        XCTAssertEqual(first.startedAt, startedAt)
+        XCTAssertEqual(first.selectedMicrophone, configuration.microphone)
+        var custom = configuration
+        custom.title = "Weekly planning"
+        custom.timestampDefaultTitle = false
+        let named = MeetingSession(configuration: custom, startedAt: startedAt, timebase: timebase)
+        XCTAssertEqual(named.title, "Weekly planning")
+        XCTAssertNil(named.defaultTitleBase)
+        let restored = try JSONDecoder().decode(MeetingSession.self, from: JSONEncoder().encode(first))
+        XCTAssertEqual(restored.title, first.title)
+        XCTAssertEqual(restored.defaultTitleBase, "Meeting")
+    }
+
+    func testOldMeetingWithoutAutomaticTitleMetadataKeepsItsTitle() throws {
+        let (session, _, _, _) = self.makeCorrectionSession(state: .completed)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(session)) as? [String: Any])
+        json.removeValue(forKey: "defaultTitleBase")
+        let restored = try JSONDecoder().decode(MeetingSession.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(restored.title, session.title)
+        XCTAssertNil(restored.defaultTitleBase)
+    }
+
     // MARK: - Rename session
 
     func testRenameSessionRejectsEmptyOrWhitespaceTitle() async throws {
@@ -4454,7 +4630,8 @@ final class MeetingRecoveryTests: XCTestCase {
         let dir = self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = MeetingSessionStore(rootDirectory: dir)
-        let (session, _, _, _) = self.makeCorrectionSession(state: .completed)
+        var (session, _, _, _) = self.makeCorrectionSession(state: .completed)
+        session.defaultTitleBase = "Meeting"
         try await store.create(session)
 
         let coordinator = MeetingSessionCoordinator(
@@ -4463,9 +4640,11 @@ final class MeetingRecoveryTests: XCTestCase {
 
         let renamed = try await coordinator.renameSession(sessionID: session.id, to: "  Weekly Sync  ")
         XCTAssertEqual(renamed.title, "Weekly Sync")
+        XCTAssertNil(renamed.defaultTitleBase)
 
         let reloaded = try await store.load(id: session.id)
         XCTAssertEqual(reloaded?.title, "Weekly Sync")
+        XCTAssertNil(reloaded?.defaultTitleBase)
         // A title rename must not consume the transcript-correction undo stack.
         XCTAssertFalse(coordinator.canUndoCorrection(sessionID: session.id))
     }
@@ -4563,7 +4742,9 @@ private final class StubCaptureController: MeetingCaptureControlling, @unchecked
     ) async throws -> MeetingCaptureStartResult {
         self.startCount += 1
         self.eventHandler = eventHandler
-        for event in self.startupEvents { eventHandler(event) }
+        for event in self.startupEvents {
+            eventHandler(event)
+        }
         await self.onStart?()
         if let startError { throw startError }
         return self.startResult

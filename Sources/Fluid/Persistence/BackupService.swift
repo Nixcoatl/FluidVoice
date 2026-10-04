@@ -56,6 +56,8 @@ struct SettingsBackupPayload: Codable, Equatable {
     // from this build decode on app versions that require it. Ignored on restore.
     let transcriptionSoundIndependentVolume: Bool?
     let autoUpdateCheckEnabled: Bool
+    // Missing in older backups; preserve the user's current preference on restore.
+    var showUpdatePopups: Bool? = nil
     let betaReleasesEnabled: Bool
     let enableDebugLogs: Bool
     let shareAnonymousAnalytics: Bool

@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import PromiseKit
 import SwiftUI
 
 enum MenuBarNavigationDestination: String {
@@ -1266,38 +1265,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func checkForUpdates(_ sender: Any?) {
         DebugLogger.shared.info("🔎 Menu action: Check for Updates…", source: "MenuBarManager")
 
-        // Call the AppDelegate's manual update check method if available
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            appDelegate.checkForUpdatesManually()
-            return
-        }
-
-        // Fallback: perform direct, tolerant check so the menu item always does something
-        Task { @MainActor in
-            do {
-                try await SimpleUpdater.shared.checkAndUpdate(
-                    owner: SimpleUpdater.releaseOwner,
-                    repo: SimpleUpdater.releaseRepo,
-                    includePrerelease: SimpleUpdater.includesPrereleases
-                )
-            } catch SimpleUpdateError.updateAlreadyInProgress {
-                DebugLogger.shared.info("Update installation already in progress", source: "MenuBarManager")
-            } catch {
-                let msg = NSAlert()
-                if let pmkError = error as? PMKError, pmkError.isCancelled {
-                    let isBeta = SettingsStore.shared.betaReleasesEnabled
-                    msg.messageText = isBeta ? "You’re Up To Date (Beta)" : "You’re Up To Date"
-                    msg.informativeText = isBeta
-                        ? "You're already running the latest build available in the beta channel."
-                        : "You're already running the latest version of FluidVoice."
-                } else {
-                    msg.messageText = "Update Check Failed"
-                    msg.informativeText = "Unable to check for updates. Please try again later.\n\nError: \(error.localizedDescription)"
-                }
-                msg.alertStyle = .informational
-                msg.runModal()
-            }
-        }
+        SimpleUpdater.shared.checkForUpdatesManually()
     }
 
     @objc private func rollbackToPreviousVersion(_ sender: Any?) {

@@ -164,6 +164,7 @@ final class MeetingSessionCoordinator: ObservableObject {
     private var retentionTimerTask: Task<Void, Never>?
 
     private enum TranscriptCorrection {
+        case editText(segmentID: MeetingTranscriptSegmentID, previousText: String, previousOriginalText: String?, previousRevision: Int)
         case rename(speakerID: SessionSpeakerID, previousName: String)
         case reassign(
             segmentID: MeetingTranscriptSegmentID,
@@ -322,8 +323,10 @@ final class MeetingSessionCoordinator: ObservableObject {
         return MeetingCaptureConfiguration(
             mode: mode,
             title: title,
+            languageCode: SettingsStore.shared.meetingRecordingDefaults.languageCode ?? "en",
             application: application,
-            microphone: microphone
+            microphone: microphone,
+            timestampDefaultTitle: true
         )
     }
 
@@ -445,7 +448,7 @@ final class MeetingSessionCoordinator: ObservableObject {
         }
         self.liveTranscriptionCoordinator = liveTranscriptionCoordinator
         self.liveTranscript = .empty
-        liveTranscriptionCoordinator.start(mode: configuration.mode)
+        liveTranscriptionCoordinator.start(mode: configuration.mode, languageCode: configuration.languageCode)
 
         do {
             try await self.store.create(session)
@@ -870,6 +873,31 @@ final class MeetingSessionCoordinator: ObservableObject {
     }
 
     @discardableResult
+    func editTranscriptText(sessionID: MeetingSessionID, segmentID: MeetingTranscriptSegmentID, text: String, expectedRevision: Int) async throws -> MeetingSession {
+        try await self.performCorrection(sessionID: sessionID) { session in
+            guard let index = session.transcriptSegments.firstIndex(where: { $0.id == segmentID }) else {
+                throw MeetingDomainError.segmentNotFound
+            }
+            let previous = session.transcriptSegments[index]
+            guard previous.revision == expectedRevision else { throw MeetingDomainError.staleTranscriptEdit }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { throw MeetingDomainError.emptyTranscriptText }
+            let inverse = TranscriptCorrection.editText(
+                segmentID: segmentID,
+                previousText: previous.text,
+                previousOriginalText: previous.originalText,
+                previousRevision: previous.revision
+            )
+            guard trimmed != previous.text else { return inverse }
+            session.transcriptSegments[index].originalText = previous.originalText ?? previous.text
+            session.transcriptSegments[index].text = trimmed
+            session.transcriptSegments[index].revision += 1
+            session.updatedAt = Date()
+            return inverse
+        }
+    }
+
+    @discardableResult
     func renameSpeaker(sessionID: MeetingSessionID, speakerID: SessionSpeakerID, to displayName: String) async throws -> MeetingSession {
         try await self.performCorrection(sessionID: sessionID) { session in
             let previousName = session.speakers.first(where: { $0.id == speakerID })?.displayName ?? ""
@@ -1012,6 +1040,7 @@ final class MeetingSessionCoordinator: ObservableObject {
         guard target.title != trimmed else { return target }
 
         target.title = trimmed
+        target.defaultTitleBase = nil
         target.updatedAt = Date()
         try await self.store.save(target)
 
@@ -1182,6 +1211,12 @@ final class MeetingSessionCoordinator: ObservableObject {
     /// False when the inverse's target no longer exists; caller must not save or re-push.
     private static func applyInverse(_ correction: TranscriptCorrection, to session: inout MeetingSession) -> Bool {
         switch correction {
+        case let .editText(segmentID, previousText, previousOriginalText, previousRevision):
+            guard let index = session.transcriptSegments.firstIndex(where: { $0.id == segmentID }) else { return false }
+            session.transcriptSegments[index].text = previousText
+            session.transcriptSegments[index].originalText = previousOriginalText
+            session.transcriptSegments[index].revision = previousRevision
+            return true
         case let .rename(speakerID, previousName):
             guard let index = session.speakers.firstIndex(where: { $0.id == speakerID }) else { return false }
             session.speakers[index].displayName = previousName

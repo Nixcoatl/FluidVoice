@@ -7,7 +7,6 @@
 
 import AppKit
 import Carbon
-import PromiseKit
 import SwiftUI
 import UserNotifications
 
@@ -34,6 +33,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
 
+    private let updatePromptPresenter = UpdatePromptPresenter.shared
+    #if DEBUG
+    private var updateUISimulationObserver: NSObjectProtocol?
+    #endif
     private var updateCheckTimer: Timer?
     private var didRevealMainWindowOnLaunch = false
     private var didRequestMainWindowReopen = false
@@ -47,6 +50,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AccessibilityMessagingTimeout.configure()
+        #if DEBUG
+        self.updateUISimulationObserver = UpdatePromptSimulation.register(self)
+        #endif
         #if DEBUG
         // Stage 0.5, Trial A, and C2 autoruns must return before Core Audio observers,
         // logging, AppServices, and UI startup. Each owns one bounded diagnostic stream.
@@ -142,6 +148,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        #if DEBUG
+        if let observer = self.updateUISimulationObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
+            self.updateUISimulationObserver = nil
+        }
+        #endif
         if Self.restartPrepared {
             // Launch only after this process exits: never overlap two app instances.
             let helper = Process()
@@ -446,153 +458,61 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - Manual Update Check
 
     @objc func checkForUpdatesManually() {
-        // Confirm invocation
-        DebugLogger.shared.info("🔎 Manual update check triggered", source: "AppDelegate")
-
-        // Get current app version for debugging
-        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-        DebugLogger.shared.info(
-            "Manual update check requested. Current version: \(currentVersion)",
-            source: "AppDelegate"
-        )
-        DebugLogger.shared.info("Checking repository: \(SimpleUpdater.releaseOwner)/\(SimpleUpdater.releaseRepo)", source: "AppDelegate")
-        DebugLogger.shared.debug("🔍 DEBUG: Manual update check started - Current version: \(currentVersion)", source: "AppDelegate")
-        DebugLogger.shared.debug("🔍 DEBUG: Repository: \(SimpleUpdater.releaseOwner)/\(SimpleUpdater.releaseRepo)", source: "AppDelegate")
-        let includePrerelease = SettingsStore.shared.betaReleasesEnabled
-        DebugLogger.shared.info(
-            "Beta releases opt-in: \(SettingsStore.shared.betaReleasesEnabled)",
-            source: "AppDelegate"
-        )
-
-        Task { @MainActor in
-            do {
-                // Use our tolerant updater to handle v-prefixed tags and 2-part versions
-                try await SimpleUpdater.shared.checkAndUpdate(
-                    owner: SimpleUpdater.releaseOwner,
-                    repo: SimpleUpdater.releaseRepo,
-                    includePrerelease: SimpleUpdater.includesPrereleases
-                )
-            } catch SimpleUpdateError.updateAlreadyInProgress {
-                DebugLogger.shared.info("Update installation already in progress", source: "AppDelegate")
-            } catch {
-                if let pmkError = error as? PMKError, pmkError.isCancelled {
-                    DebugLogger.shared.info("App is already up-to-date", source: "AppDelegate")
-                    let isBeta = SettingsStore.shared.betaReleasesEnabled
-                    self.showUpdateAlert(
-                        title: isBeta ? "No Beta Updates" : "No Updates",
-                        message: isBeta
-                            ? "You're already running the latest build available in the beta channel."
-                            : "You're already running the latest version of Fluid!"
-                    )
-                } else {
-                    DebugLogger.shared.error("Update check failed: \(error)", source: "AppDelegate")
-                    self.showUpdateAlert(
-                        title: "Update Check Failed",
-                        message: "Unable to check for updates. Please try again later.\n\nError: \(error.localizedDescription)"
-                    )
-                }
-            }
-        }
+        SimpleUpdater.shared.checkForUpdatesManually()
     }
 
     // MARK: - Automatic Update Check
 
     private func checkForUpdatesAutomatically() {
-        // Check if we should perform an automatic update check
-        guard SettingsStore.shared.shouldCheckForUpdates() else {
-            let reason = !SettingsStore.shared.autoUpdateCheckEnabled ? "disabled by user" : "checked recently"
-            DebugLogger.shared.debug("Automatic update check skipped (\(reason))", source: "AppDelegate")
-            return
-        }
-
-        DebugLogger.shared.info("Scheduling automatic update check...", source: "AppDelegate")
-
-        // Delay check slightly to avoid slowing down app launch
+        #if DEBUG
+        guard !UpdatePromptSimulation.isEnabled else { return }
+        #endif
+        guard SettingsStore.shared.shouldCheckForUpdates() else { return }
         Task {
-            // Wait 3 seconds after launch before checking
+            // Keep the existing launch delay; the updater rechecks current preferences.
             try? await Task.sleep(nanoseconds: 3_000_000_000)
-
-            DebugLogger.shared.info("Performing automatic update check for \(SimpleUpdater.releaseOwner)/\(SimpleUpdater.releaseRepo)", source: "AppDelegate")
-
-            do {
-                let includePrerelease = SettingsStore.shared.betaReleasesEnabled
-                let result = try await SimpleUpdater.shared.checkForUpdate(
-                    owner: SimpleUpdater.releaseOwner,
-                    repo: SimpleUpdater.releaseRepo,
-                    includePrerelease: SimpleUpdater.includesPrereleases
-                )
-
-                // Update the last check date regardless of result
-                await MainActor.run {
-                    SettingsStore.shared.updateLastCheckDate()
-                }
-
-                if result.hasUpdate {
-                    DebugLogger.shared.info("✅ Update available: \(result.latestVersion)", source: "AppDelegate")
-
-                    guard !SimpleUpdater.shared.isUpdateInProgress else {
-                        DebugLogger.shared.debug(
-                            "Update prompt skipped because installation is already in progress",
-                            source: "AppDelegate"
-                        )
-                        return
-                    }
-
-                    // Check if user snoozed this version (clicked "Later")
-                    if SettingsStore.shared.shouldShowUpdatePrompt(forVersion: result.latestVersion) {
-                        // Show update notification on main thread
-                        await MainActor.run {
-                            self.showUpdateNotification(version: result.latestVersion)
-                        }
-                    } else {
-                        DebugLogger.shared.debug("Update prompt snoozed for \(result.latestVersion), skipping notification", source: "AppDelegate")
-                    }
-                } else {
-                    DebugLogger.shared.info("✅ App is up to date", source: "AppDelegate")
-                }
-            } catch {
-                // Silently log the error, don't bother the user with failed automatic checks
-                DebugLogger.shared.debug("Automatic update check failed: \(error.localizedDescription)", source: "AppDelegate")
-
-                // Still update last check date to avoid hammering the API on failure
-                await MainActor.run {
-                    SettingsStore.shared.updateLastCheckDate()
-                }
-            }
-        }
-    }
-
-    @MainActor
-    private func showUpdateNotification(version: String) {
-        DebugLogger.shared.info("Showing update notification for version \(version)", source: "AppDelegate")
-
-        let alert = NSAlert()
-        alert.messageText = "Update Available"
-        alert.informativeText = "FluidVoice \(version) is now available. Would you like to install it now?\n\nThe app will restart automatically after installation."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Install Now")
-        alert.addButton(withTitle: "Later")
-
-        let response = alert.runModal()
-
-        if response == .alertFirstButtonReturn {
-            DebugLogger.shared.info("User chose to install update now", source: "AppDelegate")
-            SettingsStore.shared.clearUpdateSnooze() // Clear snooze since they're installing
-            self.checkForUpdatesManually()
-        } else {
-            DebugLogger.shared.info("User postponed update for 24 hours", source: "AppDelegate")
-            SettingsStore.shared.snoozeUpdatePrompt(forVersion: version)
+            guard !Task.isCancelled, SettingsStore.shared.shouldCheckForUpdates() else { return }
+            SimpleUpdater.shared.checkForUpdatesAutomatically()
         }
     }
 
     @MainActor
     private func showUpdateAlert(title: String, message: String) {
         DebugLogger.shared.info("🔔 Showing alert: \(title)", source: "AppDelegate")
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        self.updatePromptPresenter.presentFloatingPrompt(
+            title: title,
+            message: message,
+            actions: [FloatingPromptAction(title: "OK") {}]
+        )
     }
+
+    #if DEBUG
+    @MainActor
+    func simulateUpdateUI(_ scenario: String) {
+        guard UpdatePromptSimulation.isEnabled else { return }
+        switch scenario {
+        case "offer":
+            guard !SimpleUpdater.shared.isUpdateInProgress else { return }
+            SimpleUpdater.shared.simulationHasUpdate = true
+            SimpleUpdater.shared.checkForUpdatesAutomatically()
+        case "manual":
+            SimpleUpdater.shared.simulationHasUpdate = true
+            self.checkForUpdatesManually()
+        case "no-update":
+            SimpleUpdater.shared.simulationHasUpdate = false
+            self.checkForUpdatesManually()
+        case "progress":
+            Task { try? await SimpleUpdater.shared.checkAndUpdate(owner: "altic-dev", repo: "Fluid-oss") }
+        case "failure":
+            SimpleUpdater.shared.finishSimulatedUpdate()
+            self.showUpdateAlert(title: "Update Check Failed", message: "Simulated download failure. No update was downloaded or installed.")
+        case "dismiss":
+            SimpleUpdater.shared.finishSimulatedUpdate()
+            self.updatePromptPresenter.dismissAll()
+        default:
+            return
+        }
+        DebugLogger.shared.info("Update UI simulation: \(scenario)", source: "AppDelegate")
+    }
+    #endif
 }

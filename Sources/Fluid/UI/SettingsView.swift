@@ -7,7 +7,6 @@
 
 import AppKit
 import AVFoundation
-import PromiseKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -28,6 +27,7 @@ struct SettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var updater = SimpleUpdater.shared
     let selectedSection: SettingsSection
     let searchResults: [SettingsSearchResult]
     let searchScrollRequest: Int
@@ -331,7 +331,7 @@ struct SettingsView: View {
 
                                 Spacer()
 
-                                Picker("", selection: Binding(
+                                FluidDropdownPicker("Transcription sound", selectedTitle: SettingsStore.shared.transcriptionStartSound.displayName, selection: Binding(
                                     get: { SettingsStore.shared.transcriptionStartSound },
                                     set: { newValue in
                                         SettingsStore.shared.transcriptionStartSound = newValue
@@ -342,7 +342,6 @@ struct SettingsView: View {
                                         Text(option.displayName).tag(option)
                                     }
                                 }
-                                .pickerStyle(.menu)
                                 .fluidDropdownStyle()
                                 .frame(width: 170, alignment: .trailing)
                             }
@@ -406,6 +405,27 @@ struct SettingsView: View {
 
                                 HStack(alignment: .center) {
                                     VStack(alignment: .leading, spacing: 2) {
+                                        Text("Show update pop-ups")
+                                            .font(self.theme.typography.bodyStrong)
+                                            .foregroundStyle(self.settingsTitleText)
+                                        Text("When off, available updates appear in the top bar and here without automatic pop-ups.")
+                                            .font(self.theme.typography.bodySmall)
+                                            .foregroundStyle(self.settingsSecondaryText)
+                                    }
+
+                                    Spacer()
+
+                                    Toggle("Show update pop-ups", isOn: Binding(
+                                        get: { self.settings.showUpdatePopups },
+                                        set: { self.settings.showUpdatePopups = $0 }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    .tint(self.theme.palette.accent)
+                                    .labelsHidden()
+                                }
+
+                                HStack(alignment: .center) {
+                                    VStack(alignment: .leading, spacing: 2) {
                                         Text("Beta Releases")
                                             .font(self.theme.typography.bodyStrong)
                                             .foregroundStyle(self.settingsTitleText)
@@ -443,42 +463,33 @@ struct SettingsView: View {
                             }
                             .settingsSearchTarget(.automaticUpdates)
 
+                            if let version = self.updater.availableUpdateVersion {
+                                HStack(spacing: 10) {
+                                    Label("Update available · \(version)", systemImage: "arrow.down.circle")
+                                        .font(self.theme.typography.bodyStrong)
+                                        .foregroundStyle(self.theme.palette.accent)
+                                        .fixedSize(horizontal: false, vertical: true)
+
+                                    Spacer()
+
+                                    Button("View Update") {
+                                        self.updater.showAvailableUpdate()
+                                    }
+                                    .fluidOutlinedButton()
+                                    .controlSize(.regular)
+                                    .disabled(self.updater.isCheckingForUpdates || self.updater.isUpdateInProgress)
+                                }
+                            }
+
                             // Update Buttons
                             HStack(spacing: 10) {
                                 Button("Check for Updates") {
-                                    Task { @MainActor in
-                                        do {
-                                            let includePrerelease = SettingsStore.shared.betaReleasesEnabled
-                                            try await SimpleUpdater.shared.checkAndUpdate(
-                                                owner: SimpleUpdater.releaseOwner,
-                                                repo: SimpleUpdater.releaseRepo,
-                                                includePrerelease: SimpleUpdater.includesPrereleases
-                                            )
-                                        } catch SimpleUpdateError.updateAlreadyInProgress {
-                                            DebugLogger.shared.info(
-                                                "Update installation already in progress",
-                                                source: "SettingsView"
-                                            )
-                                        } catch {
-                                            let msg = NSAlert()
-                                            if let pmkError = error as? PMKError, pmkError.isCancelled {
-                                                let isBeta = SettingsStore.shared.betaReleasesEnabled
-                                                msg.messageText = isBeta ? "You're Up To Date (Beta)" : "You're Up To Date"
-                                                msg.informativeText = isBeta
-                                                    ? "You're already running the latest build available in the beta channel."
-                                                    : "You're already running the latest version of FluidVoice."
-                                            } else {
-                                                msg.messageText = "Update Check Failed"
-                                                msg.informativeText = "Unable to check for updates. Please try again later.\n\nError: \(error.localizedDescription)"
-                                            }
-                                            msg.alertStyle = .informational
-                                            msg.runModal()
-                                        }
-                                    }
+                                    self.updater.checkForUpdatesManually()
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(self.theme.palette.accent)
                                 .controlSize(.regular)
+                                .disabled(self.updater.isCheckingForUpdates || self.updater.isUpdateInProgress)
 
                                 Button("Release Notes") {
                                     if let url = URL(string: "https://github.com/altic-dev/Fluid-oss/releases") {
@@ -745,7 +756,7 @@ struct SettingsView: View {
                                                     icon: "xmark.circle.fill",
                                                     iconColor: .secondary,
                                                     title: "Cancel Recording",
-                                                    description: "Cancel the current recording or dismiss the active recording overlay"
+                                                    description: "Stop without pasting; save to History when enabled"
                                                 ),
                                                 shortcut: self.cancelRecordingShortcut,
                                                 isRecording: self.isRecording(.cancel),
@@ -807,12 +818,11 @@ struct SettingsView: View {
                                             }
                                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                                            Picker("", selection: self.$hotkeyMode) {
+                                            FluidDropdownPicker("Activation mode", selectedTitle: self.hotkeyMode.displayName, selection: self.$hotkeyMode) {
                                                 ForEach(HotkeyActivationMode.allCases) { mode in
                                                     Text(mode.displayName).tag(mode)
                                                 }
                                             }
-                                            .pickerStyle(.menu)
                                             .fluidDropdownStyle()
                                             .frame(width: 170, alignment: .trailing)
                                         }
@@ -906,7 +916,7 @@ struct SettingsView: View {
                                             }
                                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                                            Picker("", selection: Binding(
+                                            FluidDropdownPicker("Text insertion", selectedTitle: SettingsStore.shared.textInsertionMode.displayName, selection: Binding(
                                                 get: { SettingsStore.shared.textInsertionMode },
                                                 set: { SettingsStore.shared.textInsertionMode = $0 }
                                             )) {
@@ -914,7 +924,6 @@ struct SettingsView: View {
                                                     Text(mode.displayName).tag(mode)
                                                 }
                                             }
-                                            .pickerStyle(.menu)
                                             .fluidDropdownStyle()
                                             .fixedSize(horizontal: true, vertical: false)
                                             .frame(minWidth: 170, alignment: .trailing)
@@ -1263,7 +1272,11 @@ struct SettingsView: View {
                                     .font(self.theme.typography.bodyStrong)
                                     .foregroundStyle(self.settingsTitleText)
                                 Spacer()
-                                Picker("", selection: self.$selectedOutputUID) {
+                                FluidDropdownPicker(
+                                    "Output device",
+                                    selectedTitle: self.outputDevices.first(where: { $0.uid == self.selectedOutputUID }).map { $0.name == self.cachedDefaultOutputName ? "\($0.name) (System Default)" : $0.name } ?? "Loading...",
+                                    selection: self.$selectedOutputUID
+                                ) {
                                     // Handle empty state gracefully
                                     if self.outputDevices.isEmpty {
                                         Text("Loading...").tag("")
@@ -1275,7 +1288,6 @@ struct SettingsView: View {
                                         }
                                     }
                                 }
-                                .pickerStyle(.menu)
                                 .fluidDropdownStyle()
                                 .frame(width: 240)
                                 .disabled(self.asr.isRunning) // Disable device changes during recording
@@ -1351,21 +1363,23 @@ struct SettingsView: View {
                                 Spacer()
 
                                 if self.settings.overlayPosition == .bottom {
-                                    Picker("", selection: self.$settings.overlaySize) {
+                                    FluidDropdownPicker("Overlay size", selectedTitle: self.settings.overlaySize.displayName, selection: self.$settings.overlaySize) {
                                         ForEach(SettingsStore.OverlaySize.allCases, id: \.self) { size in
                                             Text(size.displayName).tag(size)
                                         }
                                     }
-                                    .pickerStyle(.menu)
                                     .fluidDropdownStyle()
                                     .frame(width: 170, alignment: .trailing)
                                 } else {
-                                    Picker("", selection: self.$settings.notchPresentationMode) {
+                                    FluidDropdownPicker(
+                                        "Notch presentation",
+                                        selectedTitle: self.settings.notchPresentationMode.displayName,
+                                        selection: self.$settings.notchPresentationMode
+                                    ) {
                                         ForEach(SettingsStore.NotchPresentationMode.allCases, id: \.self) { mode in
                                             Text(mode.displayName).tag(mode)
                                         }
                                     }
-                                    .pickerStyle(.menu)
                                     .fluidDropdownStyle()
                                     .frame(width: 170, alignment: .trailing)
                                 }
@@ -1513,12 +1527,11 @@ struct SettingsView: View {
 
                                 Spacer()
 
-                                Picker("", selection: self.$settings.overlayPosition) {
+                                FluidDropdownPicker("Overlay position", selectedTitle: self.settings.overlayPosition.displayName, selection: self.$settings.overlayPosition) {
                                     ForEach(SettingsStore.OverlayPosition.allCases, id: \.self) { position in
                                         Text(position.displayName).tag(position)
                                     }
                                 }
-                                .pickerStyle(.menu)
                                 .fluidDropdownStyle()
                                 .frame(width: 170, alignment: .trailing)
                             }
@@ -3142,7 +3155,7 @@ private extension SettingsView {
 
                         Spacer()
 
-                        Picker("", selection: Binding(
+                        FluidDropdownPicker("Send key", selectedTitle: self.settings.spokenSendKey.displayName, selection: Binding(
                             get: { self.settings.spokenSendKey },
                             set: { self.settings.spokenSendKey = $0 }
                         )) {
@@ -3150,7 +3163,6 @@ private extension SettingsView {
                                 Text(key.displayName).tag(key)
                             }
                         }
-                        .pickerStyle(.menu)
                         .fluidDropdownStyle()
                         .frame(width: 170, alignment: .trailing)
                         .accessibilityLabel("Spoken Send command")
@@ -3208,12 +3220,15 @@ private struct DictionarySuggestionsSettingsRow: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Picker("Ask after", selection: self.$settings.automaticDictionarySuggestionFrequency) {
+                    FluidDropdownPicker(
+                        "Ask after",
+                        selectedTitle: self.settings.automaticDictionarySuggestionFrequency.displayName,
+                        selection: self.$settings.automaticDictionarySuggestionFrequency
+                    ) {
                         ForEach(SettingsStore.AutomaticDictionarySuggestionFrequency.allCases) { frequency in
                             Text(frequency.displayName).tag(frequency)
                         }
                     }
-                    .pickerStyle(.menu)
                     .fluidDropdownStyle()
                     .fixedSize()
                 }
